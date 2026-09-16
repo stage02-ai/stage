@@ -17,19 +17,20 @@ const PORT = process.env.PORT || 3000;
 // pagina iniziale con il menu del sito.
 //
 // "index.html" (la pagina principale, con dentro tutto il sito) non deve
-// mai essere salvata così com'è nella cache del telefono/browser di chi
-// la apre: altrimenti, ad ogni aggiornamento che pubblichiamo, chi l'ha
-// già aperta in passato rischia di continuare a vedere la versione
-// vecchia per giorni, senza nessun modo semplice per accorgersene. Con
-// "no-cache" il browser controlla sempre con il sito se c'è una versione
-// più recente prima di usare quella salvata (non è lo stesso di
-// disattivare la cache del tutto: se non è cambiato nulla, non la
-// riscarica comunque da zero). Le altre risorse (immagini, css, js)
+// mai essere salvata così com'è, da nessuno lungo il tragitto (non solo
+// dal telefono/browser di chi la apre, ma anche da eventuali "magazzini"
+// intermedi usati da Vercel per velocizzare le risposte): altrimenti, ad
+// ogni aggiornamento che pubblichiamo, chi l'ha già aperta in passato
+// rischia di continuare a vedere la versione vecchia per giorni, senza
+// nessun modo semplice per accorgersene. "no-store" è la versione più
+// decisa possibile: dice esplicitamente "non salvare mai una copia di
+// questo, da nessuna parte", quindi ogni apertura del sito lo scarica
+// sempre di nuovo, aggiornato. Le altre risorse (immagini, css, js)
 // restano con il comportamento di sempre, perché cambiano raramente.
 app.use(express.static(path.join(__dirname, '..', 'browser'), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      res.setHeader('Cache-Control', 'no-store');
     }
   },
 }));
