@@ -150,6 +150,43 @@ a{color:var(--ink);text-decoration:none;}
 .toast-visibile{opacity:1;transform:translateY(0);}
 .toast-errore{background:var(--late);color:#fff;}
 
+/* ============================================================
+   Versione per telefono: da qui in giù, tutte le regole si
+   attivano solo su schermi stretti (max 700px), quindi non
+   cambiano nulla su computer/tablet. Il resto del CSS qui sopra
+   resta uguale: qui aggiustiamo solo gli spazi troppo larghi per
+   un telefono (i margini ai lati, la barra in alto, i titoli) in
+   modo che tutto ci stia senza dover scorrere di lato.
+   ============================================================ */
+body{overflow-x:hidden;} /* non deve mai comparire una barra per scorrere di lato: se capita, è quasi sempre un elemento più largo dello schermo */
+
+@media (max-width:700px){
+  .wrap{padding:0 18px;}
+  .footer-inner{padding:0 18px;justify-content:center;text-align:center;}
+
+  /* La barra in alto (logo, menu, icona account) su schermi larghi ha
+     il menu centrato "a scomparsa" sopra logo/icona: su un telefono non
+     c'è spazio per farlo, quindi il menu va a capo su una riga tutta
+     sua sotto logo e icona, e diventa scorribile di lato se le voci
+     non ci stanno comunque tutte. */
+  .navbar-inner{padding:14px 18px;flex-wrap:wrap;row-gap:10px;}
+  .brand{order:1;max-width:60%;overflow:hidden;}
+  .brand span{overflow:hidden;text-overflow:ellipsis;display:block;}
+  .nav-right{order:2;}
+  .navtabs{order:3;position:static;left:auto;top:auto;transform:none;width:100%;justify-content:flex-start;gap:22px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;}
+  .navtabs::-webkit-scrollbar{display:none;}
+
+  .hero{padding:40px 22px;border-radius:20px;}
+  .page-title{padding:32px 0 14px;}
+  .wrap h1{font-size:1.5rem !important;}
+  .qcard{padding:18px;border-radius:16px;}
+  .dropdown{width:min(250px, calc(100vw - 36px));}
+
+  /* Righe con testo che può essere lungo (email, nomi): vanno a capo
+     invece di allargare la pagina e obbligare a scorrere di lato. */
+  .cert-row,.field-row,.identity-box{flex-wrap:wrap;}
+}
+
 </style>
 </head>
 <body>
