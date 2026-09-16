@@ -185,6 +185,18 @@ body{overflow-x:hidden;} /* non deve mai comparire una barra per scorrere di lat
   /* Righe con testo che può essere lungo (email, nomi): vanno a capo
      invece di allargare la pagina e obbligare a scorrere di lato. */
   .cert-row,.field-row,.identity-box{flex-wrap:wrap;}
+
+  /* Alcune schede (foto + descrizione di un certificato, il confronto
+     "nuovo" contro "attuale") erano state fatte apposta per restare
+     sempre affiancate e scorrere di lato se non c'entravano, invece di
+     andare una sopra l'altra (per non deformarsi su schermi medi). Su
+     un telefono stretto questo nascondeva i pulsanti "Approva",
+     "Scarta" e "Collega e carica" oltre il bordo destro dello schermo,
+     senza che si capisse che bisognava scorrere per trovarli: qui li
+     obblighiamo a impilarsi, uno sopra l'altro, così tutto resta
+     visibile dentro la scheda invece di essere tagliato dal bordo. */
+  [style*="flex-wrap:nowrap;overflow-x:auto"]{flex-wrap:wrap !important;overflow-x:visible !important;}
+  [style*="flex:1 1 260px;min-width:260px"],[style*="flex:0 0 260px;width:260px"]{flex:1 1 100% !important;width:100% !important;min-width:0 !important;}
 }
 
 </style>
@@ -567,7 +579,7 @@ function squadreSelettoreHtml(idsScelti, nomeFunzioneAperturaToggle, aperto, nom
   var nomiScelti = (teamsCache || [])
     .filter(function (t) { return (idsScelti || []).some(function (id) { return String(id) === String(t.id); }); })
     .map(function (t) { return t.nome; });
-  var etichetta = nomiScelti.length ? nomiScelti.join(', ') : 'Seleziona squadre&hellip;';
+  var etichetta = nomiScelti.length ? nomiScelti.join(', ') : 'Seleziona squadra';
 
   var elencoHtml = '';
   if (aperto) {
