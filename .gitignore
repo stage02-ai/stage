@@ -1,0 +1,8 @@
+# File che non devono mai finire su GitHub (contengono chiavi/segreti,
+# oppure sono file generati automaticamente che non serve tenere nel
+# progetto). Vale per tutto il progetto, comprese le sue sottocartelle.
+
+node_modules/
+.env
+.DS_Store
+.vercel

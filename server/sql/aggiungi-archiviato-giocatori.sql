@@ -1,0 +1,27 @@
+-- ============================================================
+-- Aggiunge un campo "archiviato" alla tabella "giocatori": serve per
+-- non eliminare mai davvero un giocatore dal database (e con lui la
+-- sua storia di certificati), ma solo "archiviarlo", come già succede
+-- per i certificati medici sostituiti (pagina Certificati medici >
+-- Archivio).
+--
+-- Da qui in avanti, eliminare un giocatore dal sito non lo toglie più
+-- dal database: lo segna solo come "archiviato". Un giocatore
+-- archiviato:
+--   - sparisce dall'elenco "Giocatori" e dalla rosa della sua squadra;
+--   - non si può più scegliere per caricare un nuovo certificato;
+--   - tutti i suoi certificati, qualsiasi sia il loro stato, compaiono
+--     nella sezione "Archiviati" di Certificati medici > Archivio.
+--
+-- Come usarlo:
+-- 1. Apri il progetto su supabase.com
+-- 2. Nel menu a sinistra vai su "SQL Editor"
+-- 3. Clicca "New query"
+-- 4. Incolla tutto questo file
+-- 5. Clicca "Run" (o il pulsante Play)
+--
+-- Si può eseguire più di una volta senza rompere nulla: l'"if not
+-- exists" evita errori se il campo è già stato creato.
+-- ============================================================
+
+alter table giocatori add column if not exists archiviato boolean not null default false;

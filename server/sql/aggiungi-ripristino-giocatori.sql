@@ -1,0 +1,27 @@
+-- ============================================================
+-- Permette di RIPRISTINARE un giocatore archiviato (pulsante
+-- "Ripristina" nella sezione Archiviati di Squadre > Giocatori).
+--
+-- Quando un giocatore viene ripristinato, i certificati medici che
+-- aveva caricato PRIMA di essere archiviato non contano più come
+-- "attuali": deve caricarne uno nuovo da zero, anche se ne aveva già
+-- uno approvato in passato. Quei vecchi certificati non vengono
+-- cancellati: restano per sempre visibili nella sezione "Archiviati"
+-- di Certificati medici > Archivio, per tenere la storia completa.
+--
+-- Per farlo, aggiunge alla tabella "giocatori" un nuovo campo,
+-- "certificati_azzerati_al": la data e ora dell'ultimo ripristino. Se
+-- è vuoto, il giocatore non è mai stato ripristinato e tutto funziona
+-- come prima.
+--
+-- Come usarlo:
+-- 1. Apri il progetto su supabase.com
+-- 2. Nel menu a sinistra vai su "SQL Editor"
+-- 3. Clicca "New query"
+-- 4. Incolla tutto questo file
+-- 5. Clicca "Run" (o il pulsante Play)
+--
+-- Si può eseguire più di una volta senza rompere nulla.
+-- ============================================================
+
+alter table giocatori add column if not exists certificati_azzerati_al timestamptz;

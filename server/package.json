@@ -1,0 +1,15 @@
+{
+  "name": "certificati-medici-server",
+  "version": "1.0.0",
+  "description": "Server Node.js per la gestione dei certificati medici dei giocatori",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "nodemailer": "^6.9.14"
+  }
+}

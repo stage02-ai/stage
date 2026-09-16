@@ -1,0 +1,8 @@
+-- ============================================================
+-- QUESTO FILE NON SERVE PIÙ: non eseguirlo.
+--
+-- La data di nascita esiste già nella tabella "giocatori", quindi
+-- non serve crearne una nuova. Usa invece il file
+-- "sposta-data-nascita-in-persona.sql", che sposta quella già
+-- esistente nella tabella "persona".
+-- ============================================================
