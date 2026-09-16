@@ -15,7 +15,24 @@ const PORT = process.env.PORT || 3000;
 // (non dentro "server" stesso: lì c'è solo il codice Node.js/Express).
 // Per la rotta "/" restituisce automaticamente browser/index.html: è la
 // pagina iniziale con il menu del sito.
-app.use(express.static(path.join(__dirname, '..', 'browser')));
+//
+// "index.html" (la pagina principale, con dentro tutto il sito) non deve
+// mai essere salvata così com'è nella cache del telefono/browser di chi
+// la apre: altrimenti, ad ogni aggiornamento che pubblichiamo, chi l'ha
+// già aperta in passato rischia di continuare a vedere la versione
+// vecchia per giorni, senza nessun modo semplice per accorgersene. Con
+// "no-cache" il browser controlla sempre con il sito se c'è una versione
+// più recente prima di usare quella salvata (non è lo stesso di
+// disattivare la cache del tutto: se non è cambiato nulla, non la
+// riscarica comunque da zero). Le altre risorse (immagini, css, js)
+// restano con il comportamento di sempre, perché cambiano raramente.
+app.use(express.static(path.join(__dirname, '..', 'browser'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+  },
+}));
 
 // Limite più alto del solito (di base sarebbe 100kb): le foto dei
 // certificati arrivano come testo (base64) dentro il corpo della
