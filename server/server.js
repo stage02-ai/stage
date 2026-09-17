@@ -105,6 +105,11 @@ async function richiedeAccesso(req, res, next) {
     idPersona: persona.id,
     nome: persona.nome,
     cognome: persona.cognome,
+    // L'email con cui si effettua davvero il login (quella di Supabase
+    // Auth), non quella scritta su "persona": è quella giusta da
+    // mostrare nella pagina Impostazioni, perché è con quella che
+    // l'account accede al sito.
+    email: datiToken.user.email,
     ruolo: persona.ruolo_accesso,
     idGiocatore: giocatoreAttivo ? giocatoreAttivo.id : null,
   };
@@ -133,6 +138,7 @@ app.get('/api/chi-sono', (req, res) => {
     ruolo: req.utente.ruolo,
     nome: req.utente.nome,
     cognome: req.utente.cognome,
+    email: req.utente.email,
     idGiocatore: req.utente.idGiocatore,
   });
 });

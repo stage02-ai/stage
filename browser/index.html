@@ -1589,6 +1589,16 @@ var impostaPasswordErrore = '';
 var impostaPasswordInCorso = false;
 var impostaPasswordFatta = false;
 
+// Cambio password dalla pagina Impostazioni (diverso da quello sopra:
+// quello serve solo subito dopo aver cliccato il link di invito o di
+// recupero password, questo invece è per chi è già dentro al sito e
+// vuole semplicemente cambiarla).
+var impostazioniPasswordValore = '';
+var impostazioniPasswordConferma = '';
+var impostazioniPasswordErrore = '';
+var impostazioniPasswordInCorso = false;
+var impostazioniPasswordFatta = false;
+
 function leggiParametriInvito() {
   var hash = location.hash || '';
   if (hash.indexOf('access_token=') === -1) return null;
@@ -1644,6 +1654,49 @@ function confermaImpostaPassword() {
   });
 }
 
+function onImpostazioniPasswordChange(e) { impostazioniPasswordValore = e.target.value; impostazioniPasswordFatta = false; }
+function onImpostazioniPasswordConfermaChange(e) { impostazioniPasswordConferma = e.target.value; impostazioniPasswordFatta = false; }
+
+// Cambio password volontario, dalla pagina Impostazioni: stessa
+// funzione di Supabase (updateUser) usata da confermaImpostaPassword(),
+// ma qui chi la usa è già dentro al sito con una sessione normale, non
+// arrivato da un link di invito o di recupero.
+function confermaImpostazioniPassword() {
+  var pw = impostazioniPasswordValore || '';
+  var pw2 = impostazioniPasswordConferma || '';
+  if (pw.length < 8) {
+    impostazioniPasswordErrore = 'La password deve avere almeno 8 caratteri.';
+    render();
+    return;
+  }
+  if (pw !== pw2) {
+    impostazioniPasswordErrore = 'Le due password scritte non coincidono.';
+    render();
+    return;
+  }
+
+  impostazioniPasswordErrore = '';
+  impostazioniPasswordInCorso = true;
+  render();
+
+  supabaseClient.auth.updateUser({ password: pw }).then(function (risultato) {
+    impostazioniPasswordInCorso = false;
+    if (risultato.error) {
+      impostazioniPasswordErrore = 'Non sono riuscito a salvare la password: ' + risultato.error.message;
+      render();
+      return;
+    }
+    impostazioniPasswordFatta = true;
+    impostazioniPasswordValore = '';
+    impostazioniPasswordConferma = '';
+    render();
+  }).catch(function () {
+    impostazioniPasswordInCorso = false;
+    impostazioniPasswordErrore = 'Errore imprevisto: riprovare.';
+    render();
+  });
+}
+
 // Chiede a Supabase, per la persona già identificata dal server (vedi
 // GET /api/chi-sono), chi è: ruolo, nome, cognome, e se è collegata a
 // un giocatore attivo. Viene richiamata ogni volta che la sessione
@@ -1664,7 +1717,7 @@ function aggiornaAccessoDaSessione(sessione) {
   fetch('/api/chi-sono')
     .then(function (res) { if (!res.ok) throw new Error('non autorizzato'); return res.json(); })
     .then(function (dati) {
-      accesso = { ruolo: dati.ruolo, nome: dati.nome, cognome: dati.cognome };
+      accesso = { ruolo: dati.ruolo, nome: dati.nome, cognome: dati.cognome, email: dati.email };
       giocatoreIdentitaId = dati.idGiocatore || null;
       accessoControllato = true;
       if (accesso.ruolo === 'giocatore' && (!location.hash || location.hash === '#')) {
@@ -1967,6 +2020,11 @@ window.addEventListener('hashchange', function () {
   segnalazioneAzioneInCorso = false;
   segnalazioneErrore = null;
   menuOpen = false;
+  impostazioniPasswordValore = '';
+  impostazioniPasswordConferma = '';
+  impostazioniPasswordErrore = '';
+  impostazioniPasswordInCorso = false;
+  impostazioniPasswordFatta = false;
   // Il modulo "Carica certificato" si svuota ogni volta che si cambia
   // pagina (entrando o uscendo da lì): altrimenti, tornandoci più
   // tardi, si ritroverebbe scritto ancora quello che si era digitato
@@ -2554,7 +2612,34 @@ function temaBtn(valore, etichetta) {
 }
 
 function viewImpostazioni() {
-  var contenutoHtml = '' +
+  var campoStileImpostazioni = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
+
+  var accountHtml = '' +
+    '<div class="qcard">' +
+      '<div>' +
+        '<p style="font-weight:700;margin-bottom:4px;">Il Suo account</p>' +
+        rigaDettaglio('Nome e cognome', accesso ? escapeHtml(accesso.cognome + ' ' + accesso.nome) : '') +
+        rigaDettaglio('Email di accesso', accesso && accesso.email ? escapeHtml(accesso.email) : '') +
+        rigaDettaglio('Ruolo', accesso && accesso.ruolo === 'admin' ? 'Admin' : 'Giocatore') +
+      '</div>' +
+    '</div>';
+
+  var passwordHtml = '' +
+    '<div class="qcard">' +
+      '<div>' +
+        '<p style="font-weight:700;margin-bottom:4px;">Cambia password</p>' +
+        '<p style="color:var(--ink-muted);font-size:.85rem;margin-bottom:14px;">Scelga una nuova password per accedere al sito.</p>' +
+        '<div style="display:flex;flex-direction:column;gap:12px;max-width:360px;">' +
+          '<div><span class="field-label">Nuova password (almeno 8 caratteri)</span><input type="password" value="' + escapeHtml(impostazioniPasswordValore) + '" oninput="onImpostazioniPasswordChange(event)" style="' + campoStileImpostazioni + '"></div>' +
+          '<div><span class="field-label">Ripeta la password</span><input type="password" value="' + escapeHtml(impostazioniPasswordConferma) + '" oninput="onImpostazioniPasswordConfermaChange(event)" onkeydown="if(event.key===\'Enter\'){confermaImpostazioniPassword();}" style="' + campoStileImpostazioni + '"></div>' +
+          (impostazioniPasswordErrore ? '<p style="color:var(--late);font-size:.85rem;margin:0;">' + escapeHtml(impostazioniPasswordErrore) + '</p>' : '') +
+          (impostazioniPasswordFatta ? '<p style="color:var(--ok);font-weight:700;font-size:.85rem;margin:0;">Password aggiornata.</p>' : '') +
+          '<span class="pill pill-solid" style="cursor:pointer;align-self:flex-start;opacity:' + (impostazioniPasswordInCorso ? '.6' : '1') + ';" onclick="' + (impostazioniPasswordInCorso ? '' : 'confermaImpostazioniPassword()') + '">' + (impostazioniPasswordInCorso ? 'Salvataggio&hellip;' : 'Salva password') + '</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  var temaHtml = '' +
     '<div class="qcard">' +
       '<div>' +
         '<p style="font-weight:700;margin-bottom:4px;">Tema</p>' +
@@ -2565,6 +2650,8 @@ function viewImpostazioni() {
         '</div>' +
       '</div>' +
     '</div>';
+
+  var contenutoHtml = '<div style="display:flex;flex-direction:column;gap:20px;max-width:520px;">' + accountHtml + passwordHtml + temaHtml + '</div>';
 
   return '' +
   '<section class="wrap" style="padding-top:40px;"><div class="page-title">' +
