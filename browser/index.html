@@ -453,6 +453,14 @@ var nuovoGiocatorePiedeAperto = false; // se l'elenco a tendina del piede prefer
 var nuovoGiocatoreInviando = false;
 var nuovoGiocatoreErrore = null;
 
+// Id del giocatore per cui è in corso l'invio dell'email di accesso
+// (pulsante "Manda accesso" nell'elenco Giocatori): null quando nessun
+// invio è in corso. Su richiesta del tutor questa email non parte più
+// da sola alla creazione del giocatore, ma solo cliccando questo
+// pulsante, così l'Admin la controlla lui (vedi inviaAccessoGiocatore
+// più sotto e POST /api/giocatori/:id/invita sul server).
+var giocatoreInvitoInCorsoId = null;
+
 function apriNuovoGiocatore() {
   nuovoGiocatoreAperto = true;
   nuovoGiocatoreNome = '';
@@ -572,17 +580,50 @@ function submitNuovoGiocatore() {
       nuovoGiocatoreAperto = false;
       giocatoriCache = null; // così l'elenco mostra subito il nuovo giocatore
       render();
-      if (corpo && corpo.emailInviata) {
-        mostraToast('Giocatore aggiunto: l\'email per impostare la password è stata inviata.');
-      } else {
-        var motivo = (corpo && corpo.emailMotivo) ? (' (' + corpo.emailMotivo + ')') : '';
-        mostraToast('Giocatore aggiunto, ma non sono riuscito a mandare l\'email per impostare la password' + motivo + '.', 'errore');
-      }
+      // L'email per impostare la password non parte più da sola: resta
+      // da cliccare il pulsante "Manda accesso" sulla sua riga
+      // nell'elenco, quando l'Admin decide (vedi inviaAccessoGiocatore).
+      mostraToast('Giocatore aggiunto. Per fargli scegliere la password, clicchi "Manda accesso" sulla sua riga quando vuole.');
     })
     .catch(function (errore) {
       nuovoGiocatoreInviando = false;
       nuovoGiocatoreErrore = (errore && errore.messaggioServer) || 'Non è stato possibile salvare il giocatore.';
       render();
+    });
+}
+
+// Manda (o rimanda) l'email di accesso a un giocatore che non ha
+// ancora un account collegato: richiamata dal pulsante "Manda accesso"
+// sulla sua riga nell'elenco Giocatori (vedi viewSquadreGiocatori).
+// Prima questo invio partiva da solo alla creazione del giocatore; su
+// richiesta del tutor ora è un'azione separata, controllata
+// dall'Admin.
+function inviaAccessoGiocatore(id) {
+  if (giocatoreInvitoInCorsoId) return; // evita doppi invii mentre uno è già in corso
+  giocatoreInvitoInCorsoId = id;
+  render();
+
+  fetch('/api/giocatori/' + encodeURIComponent(id) + '/invita', { method: 'POST' })
+    .then(function (res) {
+      return res.json().then(function (corpo) {
+        if (!res.ok) {
+          var errore = new Error(corpo && corpo.errore ? corpo.errore : 'Richiesta non riuscita');
+          errore.messaggioServer = corpo && corpo.errore;
+          throw errore;
+        }
+        return corpo;
+      });
+    })
+    .then(function () {
+      giocatoreInvitoInCorsoId = null;
+      giocatoriCache = null; // così la riga smette subito di mostrare il pulsante
+      render();
+      mostraToast('Email di accesso inviata al giocatore.');
+    })
+    .catch(function (errore) {
+      giocatoreInvitoInCorsoId = null;
+      render();
+      mostraToast((errore && errore.messaggioServer) || 'Non sono riuscito a mandare l\'email di accesso.', 'errore');
     });
 }
 
@@ -2231,6 +2272,7 @@ window.addEventListener('hashchange', function () {
   giocatoreEliminazioneDefinitivaInviando = false;
   giocatoreEliminazioneDefinitivaErrore = null;
 
+  giocatoreInvitoInCorsoId = null;
   giocatoriVista = 'attivi';
   giocatoriRicerca = '';
   gestioneRicerca = '';
@@ -2473,6 +2515,9 @@ function viewSquadreGiocatori() {
         '</ul>' +
         (isAdmin && !vistaArchiviati ? '' +
           '<div class="right-cluster">' +
+            (!p.accesso_attivo ? '' +
+              '<span class="pill" style="font-size:.78rem;cursor:' + (String(giocatoreInvitoInCorsoId) === String(p.id) ? 'default' : 'pointer') + ';opacity:' + (String(giocatoreInvitoInCorsoId) === String(p.id) ? '.6' : '1') + ';" title="Manda l\'email per scegliere la password" onclick="' + (String(giocatoreInvitoInCorsoId) === String(p.id) ? '' : 'inviaAccessoGiocatore(' + JSON.stringify(p.id) + ')') + '">' + (String(giocatoreInvitoInCorsoId) === String(p.id) ? 'Invio&hellip;' : 'Manda accesso') + '</span>'
+            : '') +
             '<span class="icon-btn" title="Modifica giocatore" onclick="apriModificaGiocatore(' + JSON.stringify(p.id) + ')">' + ICONS.edit + '</span>' +
             '<span class="icon-btn" title="Elimina giocatore" onclick="chiediEliminaGiocatore(' + JSON.stringify(p.id) + ')">' + ICONS.trash + '</span>' +
           '</div>' : '') +

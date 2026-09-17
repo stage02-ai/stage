@@ -480,7 +480,7 @@ async function leggiGiocatori(archiviato) {
   // colonna "id_squadra" come prima.
   const { data, error } = await supabase
     .from('giocatori')
-    .select('id, ruolo, piede_preferito, certificati_azzerati_al, persona(nome, cognome, email, data_nascita), giocatori_squadre(squadre(id, nome)), certificati_medici(stato, data_scadenza, data_approvazione, data_caricamento)')
+    .select('id, ruolo, piede_preferito, certificati_azzerati_al, persona(nome, cognome, email, data_nascita, id_account), giocatori_squadre(squadre(id, nome)), certificati_medici(stato, data_scadenza, data_approvazione, data_caricamento)')
     .eq('archiviato', archiviato);
 
   if (error) return { error };
@@ -529,6 +529,10 @@ async function leggiGiocatori(archiviato) {
         piede_preferito: g.piede_preferito || '',
         anno_nascita: annoNascita,
         certificato_corrente_scadenza: corrente ? corrente.data_scadenza : null,
+        // Dice al sito se questo giocatore ha già un account di accesso
+        // collegato (per mostrare o no il pulsante "Manda accesso"
+        // nell'elenco: vedi POST /api/giocatori/:id/invita).
+        accesso_attivo: !!(g.persona && g.persona.id_account),
       };
     })
     .sort((a, b) => a.cognome.localeCompare(b.cognome));
@@ -700,42 +704,77 @@ app.post('/api/giocatori', richiedeAdmin, async (req, res) => {
     return res.status(500).json({ errore: erroreSquadreGiocatore.message });
   }
 
-  // 4) Creiamo anche l'account di accesso per il nuovo giocatore, e gli
-  //    mandiamo un'email (se ne occupa Supabase) con un link per
-  //    scegliere la propria password: da quel momento potrà accedere
-  //    al sito con la sua email e quella password. Se questo passaggio
-  //    fallisce (per esempio l'email è già usata da un altro account
-  //    di accesso), il giocatore resta comunque creato: si potrà
-  //    sistemare l'accesso a parte, senza dover rifare tutto da capo.
+  // 4) A differenza di prima, qui NON mandiamo più subito l'email per
+  //    scegliere la password: su richiesta del tutor, l'invio deve
+  //    passare da un pulsante ("Manda accesso") che l'Admin clicca
+  //    quando decide lui, non partire in automatico appena creato il
+  //    giocatore. Quel pulsante compare nell'elenco Giocatori finché
+  //    la persona non ha ancora un account di accesso (vedi
+  //    leggiGiocatori più sotto) e chiama POST
+  //    /api/giocatori/:id/invita, definita subito dopo questa rotta.
+  res.status(201).json({ ok: true, id: giocatore.id });
+});
+
+// Manda (o rimanda) l'email con cui un giocatore sceglie la propria
+// password di accesso: prima veniva fatto in automatico appena creato
+// il giocatore (vedi sopra), ora è un passaggio separato ed esplicito,
+// azionato dal pulsante "Manda accesso" nell'elenco Giocatori. Così
+// l'Admin decide lui quando l'email parte, e può anche rimandarla in
+// un secondo momento se il primo tentativo fosse fallito.
+app.post('/api/giocatori/:id/invita', richiedeAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  const { data: giocatore, error: erroreGiocatore } = await supabase
+    .from('giocatori')
+    .select('id_persona')
+    .eq('id', id)
+    .single();
+
+  if (erroreGiocatore || !giocatore) {
+    return res.status(404).json({ errore: 'Giocatore non trovato.' });
+  }
+
+  const { data: persona, error: erroreLetturaPersona } = await supabase
+    .from('persona')
+    .select('id, email, id_account')
+    .eq('id', giocatore.id_persona)
+    .single();
+
+  if (erroreLetturaPersona || !persona) {
+    return res.status(404).json({ errore: 'Anagrafica del giocatore non trovata.' });
+  }
+  if (persona.id_account) {
+    return res.status(400).json({ errore: 'Questo giocatore ha già un account di accesso: non serve mandargli di nuovo l\'email.' });
+  }
+  if (!persona.email) {
+    return res.status(400).json({ errore: 'Al giocatore manca l\'email: la aggiunga prima dalla modifica del giocatore.' });
+  }
+
   const baseUrl = req.protocol + '://' + req.get('host');
   const { data: invito, error: erroreInvito } = await supabase.auth.admin.inviteUserByEmail(
-    String(email).trim(),
+    persona.email,
     { redirectTo: baseUrl + '/' }
   );
 
-  let emailInviata = false;
-  let emailMotivo = null;
-
   if (erroreInvito) {
-    console.error('Non sono riuscito a invitare il nuovo giocatore ad accedere:', erroreInvito.message);
-    emailMotivo = erroreInvito.message;
-  } else if (invito && invito.user) {
-    const { error: erroreCollega } = await supabase
-      .from('persona')
-      .update({ id_account: invito.user.id, ruolo_accesso: 'giocatore' })
-      .eq('id', persona.id);
-    if (erroreCollega) {
-      console.error('Non sono riuscito a collegare l\'account di accesso al nuovo giocatore:', erroreCollega.message);
-      emailMotivo = erroreCollega.message;
-    } else {
-      emailInviata = true;
-    }
+    console.error('Non sono riuscito a invitare il giocatore ad accedere:', erroreInvito.message);
+    return res.status(500).json({ errore: erroreInvito.message });
+  }
+  if (!invito || !invito.user) {
+    return res.status(500).json({ errore: 'Invito non riuscito per un motivo sconosciuto.' });
   }
 
-  // emailInviata dice al sito se l'email per impostare la password è
-  // davvero partita, così la pagina può mostrare all'Admin un
-  // messaggio corretto (non semplicemente "fatto" a prescindere).
-  res.status(201).json({ ok: true, id: giocatore.id, emailInviata, emailMotivo });
+  const { error: erroreCollega } = await supabase
+    .from('persona')
+    .update({ id_account: invito.user.id, ruolo_accesso: 'giocatore' })
+    .eq('id', persona.id);
+
+  if (erroreCollega) {
+    console.error('Non sono riuscito a collegare l\'account di accesso al giocatore:', erroreCollega.message);
+    return res.status(500).json({ errore: erroreCollega.message });
+  }
+
+  res.json({ ok: true });
 });
 
 // Modifica un giocatore esistente: aggiorna sia i dati anagrafici
