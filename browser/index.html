@@ -1599,6 +1599,24 @@ var impostazioniPasswordErrore = '';
 var impostazioniPasswordInCorso = false;
 var impostazioniPasswordFatta = false;
 
+// Modifica di nome, cognome ed email dalla scheda Account di
+// Impostazioni. "Inizializzato" serve solo per copiare, la prima
+// volta che si apre quella scheda dopo l'accesso (o dopo un cambio
+// pagina), i valori attuali dentro questi campi modificabili: da lì
+// in poi restano quello che la persona sta scrivendo, finché non
+// cambia pagina (vedi il reset dentro l'ascoltatore "hashchange").
+var impostazioniAccountInizializzato = false;
+var impostazioniAccountNome = '';
+var impostazioniAccountCognome = '';
+var impostazioniAccountEmail = '';
+var impostazioniAccountErrore = '';
+var impostazioniAccountInCorso = false;
+var impostazioniAccountFatta = false;
+// Se l'ultimo salvataggio riuscito ha cambiato anche l'email di
+// accesso: in quel caso il messaggio di conferma ricorda che serve
+// cliccare il link mandato da Supabase prima che il cambio sia attivo.
+var impostazioniAccountEmailRichiesta = false;
+
 function leggiParametriInvito() {
   var hash = location.hash || '';
   if (hash.indexOf('access_token=') === -1) return null;
@@ -1695,6 +1713,92 @@ function confermaImpostazioniPassword() {
     impostazioniPasswordErrore = 'Errore imprevisto: riprovare.';
     render();
   });
+}
+
+function onImpostazioniAccountNomeChange(e) { impostazioniAccountNome = e.target.value; impostazioniAccountFatta = false; }
+function onImpostazioniAccountCognomeChange(e) { impostazioniAccountCognome = e.target.value; impostazioniAccountFatta = false; }
+function onImpostazioniAccountEmailChange(e) { impostazioniAccountEmail = e.target.value; impostazioniAccountFatta = false; }
+
+// Salva le modifiche a nome, cognome ed email fatte nella scheda
+// Account di Impostazioni. Nome e cognome (e l'email scritta sulla
+// tabella "persona", usata per esempio per le notifiche sui
+// certificati) si aggiornano subito sul server. Se in più è stata
+// cambiata anche l'email DI ACCESSO, chiediamo a Supabase Auth di
+// cambiarla: quel cambio diventa attivo solo dopo che la persona
+// clicca sul link di conferma che le arriva via email, non subito.
+function confermaImpostazioniAccount() {
+  var nome = (impostazioniAccountNome || '').trim();
+  var cognome = (impostazioniAccountCognome || '').trim();
+  var email = (impostazioniAccountEmail || '').trim();
+
+  if (!nome) {
+    impostazioniAccountErrore = 'Scriva il Suo nome.';
+    render();
+    return;
+  }
+  if (!cognome) {
+    impostazioniAccountErrore = 'Scriva il Suo cognome.';
+    render();
+    return;
+  }
+  if (!email) {
+    impostazioniAccountErrore = 'Scriva la Sua email.';
+    render();
+    return;
+  }
+
+  var emailAccessoCambiata = !!(accesso && email !== (accesso.email || ''));
+
+  impostazioniAccountErrore = '';
+  impostazioniAccountInCorso = true;
+  render();
+
+  fetch('/api/mio-account', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome: nome, cognome: cognome, email: email }),
+  })
+    .then(function (res) {
+      return res.json().then(function (corpo) {
+        if (!res.ok) {
+          var errore = new Error('errore-account');
+          errore.messaggioServer = corpo && corpo.errore;
+          throw errore;
+        }
+        return corpo;
+      });
+    })
+    .then(function () {
+      if (!emailAccessoCambiata) return null;
+      return supabaseClient.auth.updateUser({ email: email }).then(function (risultato) {
+        if (risultato.error) {
+          var errore = new Error('errore-email');
+          errore.messaggioServer = 'Nome e cognome sono stati salvati, ma non sono riuscito a cambiare l\'email di accesso: ' + risultato.error.message;
+          throw errore;
+        }
+      });
+    })
+    .then(function () {
+      impostazioniAccountInCorso = false;
+      impostazioniAccountEmailRichiesta = emailAccessoCambiata;
+      if (accesso) {
+        accesso.nome = nome;
+        accesso.cognome = cognome;
+      }
+      // I dati di nome/cognome/email compaiono anche nelle liste
+      // giocatori e certificati (per l'Admin) e nell'archivio: le
+      // ricarichiamo, così mostrano subito i valori aggiornati.
+      giocatoriCache = null;
+      certificatiCache = null;
+      archivioCache = null;
+      impostazioniAccountFatta = true;
+      render();
+    })
+    .catch(function (errore) {
+      impostazioniAccountInCorso = false;
+      impostazioniAccountErrore = (errore && errore.messaggioServer) ? errore.messaggioServer : 'Errore durante il salvataggio: riprovi.';
+      render();
+    });
 }
 
 // Chiede a Supabase, per la persona già identificata dal server (vedi
@@ -2026,6 +2130,14 @@ window.addEventListener('hashchange', function () {
   impostazioniPasswordErrore = '';
   impostazioniPasswordInCorso = false;
   impostazioniPasswordFatta = false;
+  impostazioniAccountInizializzato = false;
+  impostazioniAccountNome = '';
+  impostazioniAccountCognome = '';
+  impostazioniAccountEmail = '';
+  impostazioniAccountErrore = '';
+  impostazioniAccountInCorso = false;
+  impostazioniAccountFatta = false;
+  impostazioniAccountEmailRichiesta = false;
   // Il modulo "Carica certificato" si svuota ogni volta che si cambia
   // pagina (entrando o uscendo da lì): altrimenti, tornandoci più
   // tardi, si ritroverebbe scritto ancora quello che si era digitato
@@ -2624,6 +2736,16 @@ function cambiaTabImpostazioni(tab) {
 function viewImpostazioni() {
   var campoStileImpostazioni = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
 
+  // La prima volta che si apre la scheda Account dopo l'accesso (o
+  // dopo un cambio pagina, che azzera "Inizializzato"), i campi
+  // modificabili partono dai valori attuali della persona.
+  if (!impostazioniAccountInizializzato && accesso) {
+    impostazioniAccountNome = accesso.nome || '';
+    impostazioniAccountCognome = accesso.cognome || '';
+    impostazioniAccountEmail = accesso.email || '';
+    impostazioniAccountInizializzato = true;
+  }
+
   var tabsHtml = '' +
     '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:22px 0 4px;">' +
       '<span class="badge ' + (impostazioniTab === 'account' ? 'badge-ok' : 'badge-none') + '" style="cursor:pointer;" onclick="cambiaTabImpostazioni(\'account\')">Account</span>' +
@@ -2664,9 +2786,16 @@ function viewImpostazioni() {
       '<div class="qcard" style="max-width:420px;">' +
         '<div>' +
           '<p style="font-weight:700;margin-bottom:4px;">Il Suo account</p>' +
-          rigaDettaglio('Nome e cognome', accesso ? escapeHtml(accesso.cognome + ' ' + accesso.nome) : '') +
-          rigaDettaglio('Email di accesso', accesso && accesso.email ? escapeHtml(accesso.email) : '') +
-          rigaDettaglio('Ruolo', accesso && accesso.ruolo === 'admin' ? 'Admin' : 'Giocatore') +
+          '<p style="color:var(--ink-muted);font-size:.85rem;margin-bottom:14px;">Pu&ograve; modificare qui il Suo nome, cognome ed email di accesso.</p>' +
+          '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(impostazioniAccountNome) + '" oninput="onImpostazioniAccountNomeChange(event)" style="' + campoStileImpostazioni + '"></div>' +
+            '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(impostazioniAccountCognome) + '" oninput="onImpostazioniAccountCognomeChange(event)" style="' + campoStileImpostazioni + '"></div>' +
+            '<div><span class="field-label">Email di accesso</span><input type="email" value="' + escapeHtml(impostazioniAccountEmail) + '" oninput="onImpostazioniAccountEmailChange(event)" style="' + campoStileImpostazioni + '"></div>' +
+            rigaDettaglio('Ruolo', accesso && accesso.ruolo === 'admin' ? 'Admin' : 'Giocatore') +
+            (impostazioniAccountErrore ? '<p style="color:var(--late);font-size:.85rem;margin:0;">' + escapeHtml(impostazioniAccountErrore) + '</p>' : '') +
+            (impostazioniAccountFatta ? '<p style="color:var(--ok);font-weight:700;font-size:.85rem;margin:0;">' + (impostazioniAccountEmailRichiesta ? 'Nome e cognome salvati. Le abbiamo mandato un\'email di conferma al nuovo indirizzo: il cambio dell\'email di accesso sar&agrave; attivo solo dopo aver cliccato sul link ricevuto.' : 'Dati aggiornati.') + '</p>' : '') +
+            '<span class="pill pill-solid" style="cursor:pointer;align-self:flex-start;opacity:' + (impostazioniAccountInCorso ? '.6' : '1') + ';" onclick="' + (impostazioniAccountInCorso ? '' : 'confermaImpostazioniAccount()') + '">' + (impostazioniAccountInCorso ? 'Salvataggio&hellip;' : 'Salva modifiche') + '</span>' +
+          '</div>' +
         '</div>' +
       '</div>';
   }

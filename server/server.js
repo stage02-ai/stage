@@ -143,6 +143,56 @@ app.get('/api/chi-sono', (req, res) => {
   });
 });
 
+// Permette a chi ha fatto accesso (Admin o Giocatore) di modificare i
+// propri dati anagrafici dalla scheda "Account" della pagina
+// Impostazioni: nome, cognome ed email. Aggiorna sempre e solo la
+// PROPRIA persona (req.utente.idPersona, calcolato dal server in
+// richiedeAccesso a partire dal token: mai un id mandato dal
+// browser), così nessuno può modificare i dati di qualcun altro.
+//
+// NOTA sull'email: qui aggiorniamo l'email scritta sulla tabella
+// "persona" (quella usata, per esempio, per le notifiche sui
+// certificati). L'email con cui si effettua davvero il login resta
+// quella di Supabase Auth: per cambiare anche quella, il sito chiama
+// separatamente, dal browser, supabase.auth.updateUser({ email }),
+// che manda un'email di conferma prima di attivare il cambio.
+app.patch('/api/mio-account', async (req, res) => {
+  const { nome, cognome, email } = req.body || {};
+
+  if (!nome || !String(nome).trim()) {
+    return res.status(400).json({ errore: 'Serve il nome.' });
+  }
+  if (!cognome || !String(cognome).trim()) {
+    return res.status(400).json({ errore: 'Serve il cognome.' });
+  }
+  if (!email || !String(email).trim()) {
+    return res.status(400).json({ errore: 'Serve l\'email.' });
+  }
+
+  const { error: errorePersona } = await supabase
+    .from('persona')
+    .update({
+      nome: String(nome).trim(),
+      cognome: String(cognome).trim(),
+      email: String(email).trim(),
+    })
+    .eq('id', req.utente.idPersona);
+
+  if (errorePersona) {
+    if (errorePersona.code === '23505') {
+      return res.status(400).json({ errore: 'Esiste già una persona con questa email.' });
+    }
+    console.error('Errore nella modifica del proprio account:', errorePersona.message);
+    return res.status(500).json({ errore: errorePersona.message });
+  }
+
+  res.json({
+    nome: String(nome).trim(),
+    cognome: String(cognome).trim(),
+    email: String(email).trim(),
+  });
+});
+
 // Nome dello spazio di archiviazione ("bucket") su Supabase Storage dove
 // vengono salvate le foto dei certificati medici. Non è pubblico: per
 // vederle si passa sempre da un link temporaneo generato dal server
