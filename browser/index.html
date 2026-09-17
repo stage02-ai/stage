@@ -3435,7 +3435,16 @@ function blocchettoCertificato(cert, etichetta, fotoUrl, fotoLoading, testoVuoto
       (scad ? ' &nbsp;<span class="status-dot ' + scad.cls + '" style="display:inline-block;vertical-align:middle;" title="' + scad.label + '"></span> ' + scad.label : '');
     var notaValoreHtml = notaTroncataHtml(cert.nota, 40);
 
-    var mostraRevocaOra = !!(mostraRevoca && cert.stato === 'approvato');
+    // "Scarta comunque" solo se il certificato è valido (pallino verde):
+    // se è già in scadenza o scaduto, il giocatore può già caricarne uno
+    // nuovo da sé (vedi POST /api/certificati), quindi non serve questa
+    // scorciatoia; resta invece utile per un certificato ancora valido a
+    // lungo, approvato per errore, che altrimenti resterebbe "attuale"
+    // per mesi. Se il certificato non ha nessuna data di scadenza (i più
+    // vecchi, caricati prima che esistesse questo controllo) il pulsante
+    // resta comunque visibile, per non bloccare quei casi.
+    var certificatoValido = !scad || scad.cls === 'status-dot-ok';
+    var mostraRevocaOra = !!(mostraRevoca && cert.stato === 'approvato' && certificatoValido);
 
     descrizioneHtml = '' +
       '<h3 style="font-size:.8rem;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin:0;">' + etichetta + '</h3>' +
