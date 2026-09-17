@@ -640,7 +640,7 @@ function sceltaSingolaSelettoreHtml(valoreScelto, opzioni, placeholder, nomeFunz
   var elencoHtml = '';
   if (aperto) {
     elencoHtml = (opzioni || []).map(function (o) {
-      return '<div class="dropdown-item" onclick="' + nomeFunzioneScelta + '(' + JSON.stringify(o.valore) + ')">' +
+      return '<div class="dropdown-item" onclick=\'' + nomeFunzioneScelta + '(' + JSON.stringify(o.valore) + ')\'>' +
         escapeHtml(o.etichetta) +
       '</div>';
     }).join('');
