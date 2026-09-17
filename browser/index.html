@@ -443,6 +443,8 @@ var nuovoGiocatoreNome = '';
 var nuovoGiocatoreCognome = '';
 var nuovoGiocatoreEmail = '';
 var nuovoGiocatoreDataNascita = '';
+var nuovoGiocatoreDataAperta = false; // se il calendario della data di nascita è aperto in questo momento
+var nuovoGiocatoreDataMese = null; // { anno, mese } mostrato dal calendario in questo momento
 var nuovoGiocatoreRuolo = '';
 var nuovoGiocatoreRuoloAperto = false; // se l'elenco a tendina del ruolo è aperto in questo momento
 var nuovoGiocatoreSquadreIds = []; // un giocatore può appartenere a più squadre: elenco degli id scelti
@@ -458,6 +460,8 @@ function apriNuovoGiocatore() {
   nuovoGiocatoreCognome = '';
   nuovoGiocatoreEmail = '';
   nuovoGiocatoreDataNascita = '';
+  nuovoGiocatoreDataAperta = false;
+  nuovoGiocatoreDataMese = null;
   nuovoGiocatoreRuolo = '';
   nuovoGiocatoreRuoloAperto = false;
   nuovoGiocatoreSquadreIds = [];
@@ -478,7 +482,30 @@ function annullaNuovoGiocatore() {
 function onNuovoGiocatoreNomeChange(e) { nuovoGiocatoreNome = e.target.value; }
 function onNuovoGiocatoreCognomeChange(e) { nuovoGiocatoreCognome = e.target.value; }
 function onNuovoGiocatoreEmailChange(e) { nuovoGiocatoreEmail = e.target.value; }
-function onNuovoGiocatoreDataNascitaChange(e) { nuovoGiocatoreDataNascita = e.target.value; }
+function toggleNuovoGiocatoreDataAperta() {
+  if (!nuovoGiocatoreDataAperta) {
+    nuovoGiocatoreDataMese = meseCalendarioIniziale(nuovoGiocatoreDataNascita);
+  }
+  nuovoGiocatoreDataAperta = !nuovoGiocatoreDataAperta;
+  render();
+}
+function onNuovoGiocatoreDataMesePrecedente() {
+  nuovoGiocatoreDataMese = meseCalendarioSpostato(nuovoGiocatoreDataMese, -1);
+  render();
+}
+function onNuovoGiocatoreDataMeseSuccessivo() {
+  nuovoGiocatoreDataMese = meseCalendarioSpostato(nuovoGiocatoreDataMese, 1);
+  render();
+}
+function onNuovoGiocatoreDataAnnoCambio(nuovoAnno) {
+  nuovoGiocatoreDataMese = { anno: parseInt(nuovoAnno, 10), mese: nuovoGiocatoreDataMese.mese };
+  render();
+}
+function onNuovoGiocatoreDataGiornoScelto(dataIso) {
+  nuovoGiocatoreDataNascita = dataIso;
+  nuovoGiocatoreDataAperta = false;
+  render();
+}
 function onNuovoGiocatoreRuoloChange(valore) {
   nuovoGiocatoreRuolo = valore;
   nuovoGiocatoreRuoloAperto = false;
@@ -656,6 +683,97 @@ function sceltaSingolaSelettoreHtml(valoreScelto, opzioni, placeholder, nomeFunz
   '</div>';
 }
 
+var MESI_ITALIANI = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
+var GIORNI_SETTIMANA_ITALIANI = ['L', 'M', 'M', 'G', 'V', 'S', 'D'];
+
+// Il mese ({ anno, mese }, mese da 0 a 11) da cui parte il calendario
+// quando lo si apre: quello del giorno già scelto, oppure il mese
+// corrente se il campo è ancora vuoto.
+function meseCalendarioIniziale(dataIsoScelta) {
+  if (dataIsoScelta) {
+    var parti = dataIsoScelta.split('-');
+    return { anno: parseInt(parti[0], 10), mese: parseInt(parti[1], 10) - 1 };
+  }
+  var oggi = new Date();
+  return { anno: oggi.getFullYear(), mese: oggi.getMonth() };
+}
+
+// Sposta il mese del calendario avanti o indietro di "delta" mesi,
+// passando all'anno giusto quando si supera Gennaio o Dicembre.
+function meseCalendarioSpostato(mese, delta) {
+  var totale = mese.anno * 12 + mese.mese + delta;
+  return { anno: Math.floor(totale / 12), mese: ((totale % 12) + 12) % 12 };
+}
+
+function dueCifre(n) { return n < 10 ? '0' + n : '' + n; }
+
+// Disegna il campo "Data di nascita" con lo stesso stile dei campi
+// "Ruolo" e "Squadre" qui sopra: un riquadro compatto che, premuto,
+// apre GALLEGGIANDO un calendario disegnato da noi (stesso aspetto in
+// ogni browser/telefono), invece di quello del dispositivo. Premendo
+// un giorno il calendario si chiude da solo. "meseVisualizzato" è il
+// mese che il calendario sta mostrando in questo momento (può essere
+// diverso dal giorno già scelto, se l'utente sta ancora scorrendo i
+// mesi); "dataMassimaIso" impedisce di scegliere date nel futuro.
+function dataSelettoreHtml(dataIsoScelta, meseVisualizzato, dataMassimaIso, nomeFunzioneAperturaToggle, aperto, nomeFunzioneMesePrecedente, nomeFunzioneMeseSuccessivo, nomeFunzioneAnnoCambio, nomeFunzioneGiornoScelto) {
+  var etichetta = dataIsoScelta ? formattaDataBreve(dataIsoScelta) : 'Seleziona data di nascita';
+
+  var pannelloHtml = '';
+  if (aperto && meseVisualizzato) {
+    var anno = meseVisualizzato.anno;
+    var mese = meseVisualizzato.mese;
+    var annoOggi = new Date().getFullYear();
+
+    var opzioniAnno = '';
+    for (var a = annoOggi; a >= annoOggi - 90; a--) {
+      opzioniAnno += '<option value="' + a + '"' + (a === anno ? ' selected' : '') + '>' + a + '</option>';
+    }
+
+    var intestazioneHtml = '' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:10px;">' +
+        '<span onclick="' + nomeFunzioneMesePrecedente + '()" class="icon-btn" style="width:28px;height:28px;">' + ICONS.arrowLeft + '</span>' +
+        '<span style="font-weight:700;font-size:.82rem;">' + MESI_ITALIANI[mese] + '</span>' +
+        '<select onchange="' + nomeFunzioneAnnoCambio + '(this.value)" style="border:1.5px solid var(--border);border-radius:8px;padding:4px 6px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--ink);">' + opzioniAnno + '</select>' +
+        '<span onclick="' + nomeFunzioneMeseSuccessivo + '()" class="icon-btn" style="width:28px;height:28px;">' + ICONS.arrowRight + '</span>' +
+      '</div>';
+
+    var intestazioneGiorniHtml = '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px;">' +
+      GIORNI_SETTIMANA_ITALIANI.map(function (g) {
+        return '<span style="text-align:center;font-size:.72rem;font-weight:700;color:var(--ink-muted);">' + g + '</span>';
+      }).join('') +
+    '</div>';
+
+    var primoGiorno = (new Date(anno, mese, 1).getDay() + 6) % 7; // 0=lunedì
+    var totaleGiorni = new Date(anno, mese + 1, 0).getDate();
+    var celleHtml = '';
+    for (var v = 0; v < primoGiorno; v++) {
+      celleHtml += '<span></span>';
+    }
+    for (var g = 1; g <= totaleGiorni; g++) {
+      var dataIsoGiorno = anno + '-' + dueCifre(mese + 1) + '-' + dueCifre(g);
+      var disabilitato = dataMassimaIso && dataIsoGiorno > dataMassimaIso;
+      var selezionato = dataIsoScelta === dataIsoGiorno;
+      if (disabilitato) {
+        celleHtml += '<span style="text-align:center;padding:6px 0;font-size:.82rem;color:var(--ink-muted);opacity:.35;">' + g + '</span>';
+      } else {
+        celleHtml += '<span class="dropdown-item" onclick=\'' + nomeFunzioneGiornoScelto + '(' + JSON.stringify(dataIsoGiorno) + ')\' style="justify-content:center;padding:6px 0;font-size:.82rem;' + (selezionato ? 'background:var(--solid-bg);color:var(--solid-text);' : '') + '">' + g + '</span>';
+      }
+    }
+    var grigliaHtml = '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;">' + celleHtml + '</div>';
+
+    pannelloHtml = '<div class="dropdown" style="left:0;width:270px;top:calc(100% + 6px);">' + intestazioneHtml + intestazioneGiorniHtml + grigliaHtml + '</div>';
+  }
+
+  return '' +
+  '<div style="position:relative;">' +
+    '<div onclick="' + nomeFunzioneAperturaToggle + '()" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+      '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(etichetta) + '</span>' +
+      ICONS.chevron +
+    '</div>' +
+    pannelloHtml +
+  '</div>';
+}
+
 // Il modulo per aggiungere un giocatore, con tutti i dati previsti dal
 // database: dati anagrafici (nome, cognome, email, data di nascita) e
 // dati da giocatore (ruolo, squadre, piede preferito).
@@ -682,7 +800,7 @@ function nuovoGiocatoreCardHtml() {
       '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(nuovoGiocatoreNome) + '" oninput="onNuovoGiocatoreNomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(nuovoGiocatoreCognome) + '" oninput="onNuovoGiocatoreCognomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Email</span><input type="email" value="' + escapeHtml(nuovoGiocatoreEmail) + '" oninput="onNuovoGiocatoreEmailChange(event)" style="' + campoStile + '"></div>' +
-      '<div><span class="field-label">Data di nascita</span><input type="date" value="' + escapeHtml(nuovoGiocatoreDataNascita) + '" max="' + oggi + '" oninput="onNuovoGiocatoreDataNascitaChange(event)" style="' + campoStile + '"></div>' +
+      '<div><span class="field-label">Data di nascita</span>' + dataSelettoreHtml(nuovoGiocatoreDataNascita, nuovoGiocatoreDataMese, oggi, 'toggleNuovoGiocatoreDataAperta', nuovoGiocatoreDataAperta, 'onNuovoGiocatoreDataMesePrecedente', 'onNuovoGiocatoreDataMeseSuccessivo', 'onNuovoGiocatoreDataAnnoCambio', 'onNuovoGiocatoreDataGiornoScelto') + '</div>' +
       '<div><span class="field-label">Ruolo</span>' + sceltaSingolaSelettoreHtml(nuovoGiocatoreRuolo, opzioniRuolo, 'Scegli il ruolo…', 'toggleNuovoGiocatoreRuoloAperto', nuovoGiocatoreRuoloAperto, 'onNuovoGiocatoreRuoloChange') + '</div>' +
       '<div><span class="field-label">Piede preferito</span>' + sceltaSingolaSelettoreHtml(nuovoGiocatorePiede, opzioniPiede, 'Scegli il piede preferito…', 'toggleNuovoGiocatorePiedeAperto', nuovoGiocatorePiedeAperto, 'onNuovoGiocatorePiedeChange') + '</div>' +
       '<div><span class="field-label">Squadre</span>' + squadreSelettoreHtml(nuovoGiocatoreSquadreIds, 'toggleNuovoGiocatoreSquadreAperto', nuovoGiocatoreSquadreAperto, 'onNuovoGiocatoreSquadraToggle') + '</div>' +
@@ -703,6 +821,8 @@ var giocatoreModificaNome = '';
 var giocatoreModificaCognome = '';
 var giocatoreModificaEmail = '';
 var giocatoreModificaDataNascita = '';
+var giocatoreModificaDataAperta = false; // se il calendario della data di nascita è aperto in questo momento (condiviso con Ripristina)
+var giocatoreModificaDataMese = null; // { anno, mese } mostrato dal calendario in questo momento (condiviso con Ripristina)
 var giocatoreModificaRuolo = '';
 var giocatoreModificaRuoloAperto = false; // se l'elenco a tendina del ruolo è aperto in questo momento (condiviso con Ripristina)
 var giocatoreModificaSquadreIds = []; // un giocatore può appartenere a più squadre: elenco degli id scelti
@@ -727,6 +847,8 @@ function apriModificaGiocatore(id) {
   giocatoreModificaCognome = p.cognome || '';
   giocatoreModificaEmail = p.email || '';
   giocatoreModificaDataNascita = p.data_nascita || '';
+  giocatoreModificaDataAperta = false;
+  giocatoreModificaDataMese = null;
   giocatoreModificaRuolo = p.ruolo || '';
   giocatoreModificaRuoloAperto = false;
   giocatoreModificaSquadreIds = (p.squadre || []).map(function (s) { return s.id; });
@@ -759,6 +881,8 @@ function apriRipristinaGiocatore(id) {
   giocatoreModificaCognome = p.cognome || '';
   giocatoreModificaEmail = p.email || '';
   giocatoreModificaDataNascita = p.data_nascita || '';
+  giocatoreModificaDataAperta = false;
+  giocatoreModificaDataMese = null;
   giocatoreModificaRuolo = p.ruolo || '';
   giocatoreModificaRuoloAperto = false;
   giocatoreModificaSquadreIds = (p.squadre || []).map(function (s) { return s.id; });
@@ -865,7 +989,7 @@ function giocatoreRipristinaCardHtml(p) {
       '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(giocatoreModificaNome) + '" oninput="onGiocatoreModificaNomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(giocatoreModificaCognome) + '" oninput="onGiocatoreModificaCognomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Email</span><input type="email" value="' + escapeHtml(giocatoreModificaEmail) + '" oninput="onGiocatoreModificaEmailChange(event)" style="' + campoStile + '"></div>' +
-      '<div><span class="field-label">Data di nascita</span><input type="date" value="' + escapeHtml(giocatoreModificaDataNascita) + '" max="' + oggi + '" oninput="onGiocatoreModificaDataNascitaChange(event)" style="' + campoStile + '"></div>' +
+      '<div><span class="field-label">Data di nascita</span>' + dataSelettoreHtml(giocatoreModificaDataNascita, giocatoreModificaDataMese, oggi, 'toggleGiocatoreModificaDataAperta', giocatoreModificaDataAperta, 'onGiocatoreModificaDataMesePrecedente', 'onGiocatoreModificaDataMeseSuccessivo', 'onGiocatoreModificaDataAnnoCambio', 'onGiocatoreModificaDataGiornoScelto') + '</div>' +
       '<div><span class="field-label">Ruolo</span>' + sceltaSingolaSelettoreHtml(giocatoreModificaRuolo, opzioniRuolo, 'Scegli il ruolo…', 'toggleGiocatoreModificaRuoloAperto', giocatoreModificaRuoloAperto, 'onGiocatoreModificaRuoloChange') + '</div>' +
       '<div><span class="field-label">Piede preferito</span>' + sceltaSingolaSelettoreHtml(giocatoreModificaPiede, opzioniPiede, 'Scegli il piede preferito…', 'toggleGiocatoreModificaPiedeAperto', giocatoreModificaPiedeAperto, 'onGiocatoreModificaPiedeChange') + '</div>' +
       '<div><span class="field-label">Squadre</span>' + squadreSelettoreHtml(giocatoreModificaSquadreIds, 'toggleGiocatoreModificaSquadreAperto', giocatoreModificaSquadreAperto, 'onGiocatoreModificaSquadraToggle') + '</div>' +
@@ -887,7 +1011,30 @@ function annullaModificaGiocatore() {
 function onGiocatoreModificaNomeChange(e) { giocatoreModificaNome = e.target.value; }
 function onGiocatoreModificaCognomeChange(e) { giocatoreModificaCognome = e.target.value; }
 function onGiocatoreModificaEmailChange(e) { giocatoreModificaEmail = e.target.value; }
-function onGiocatoreModificaDataNascitaChange(e) { giocatoreModificaDataNascita = e.target.value; }
+function toggleGiocatoreModificaDataAperta() {
+  if (!giocatoreModificaDataAperta) {
+    giocatoreModificaDataMese = meseCalendarioIniziale(giocatoreModificaDataNascita);
+  }
+  giocatoreModificaDataAperta = !giocatoreModificaDataAperta;
+  render();
+}
+function onGiocatoreModificaDataMesePrecedente() {
+  giocatoreModificaDataMese = meseCalendarioSpostato(giocatoreModificaDataMese, -1);
+  render();
+}
+function onGiocatoreModificaDataMeseSuccessivo() {
+  giocatoreModificaDataMese = meseCalendarioSpostato(giocatoreModificaDataMese, 1);
+  render();
+}
+function onGiocatoreModificaDataAnnoCambio(nuovoAnno) {
+  giocatoreModificaDataMese = { anno: parseInt(nuovoAnno, 10), mese: giocatoreModificaDataMese.mese };
+  render();
+}
+function onGiocatoreModificaDataGiornoScelto(dataIso) {
+  giocatoreModificaDataNascita = dataIso;
+  giocatoreModificaDataAperta = false;
+  render();
+}
 function onGiocatoreModificaRuoloChange(valore) {
   giocatoreModificaRuolo = valore;
   giocatoreModificaRuoloAperto = false;
@@ -998,7 +1145,7 @@ function giocatoreModificaCardHtml(p) {
       '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(giocatoreModificaNome) + '" oninput="onGiocatoreModificaNomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(giocatoreModificaCognome) + '" oninput="onGiocatoreModificaCognomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Email</span><input type="email" value="' + escapeHtml(giocatoreModificaEmail) + '" oninput="onGiocatoreModificaEmailChange(event)" style="' + campoStile + '"></div>' +
-      '<div><span class="field-label">Data di nascita</span><input type="date" value="' + escapeHtml(giocatoreModificaDataNascita) + '" max="' + oggi + '" oninput="onGiocatoreModificaDataNascitaChange(event)" style="' + campoStile + '"></div>' +
+      '<div><span class="field-label">Data di nascita</span>' + dataSelettoreHtml(giocatoreModificaDataNascita, giocatoreModificaDataMese, oggi, 'toggleGiocatoreModificaDataAperta', giocatoreModificaDataAperta, 'onGiocatoreModificaDataMesePrecedente', 'onGiocatoreModificaDataMeseSuccessivo', 'onGiocatoreModificaDataAnnoCambio', 'onGiocatoreModificaDataGiornoScelto') + '</div>' +
       '<div><span class="field-label">Ruolo</span>' + sceltaSingolaSelettoreHtml(giocatoreModificaRuolo, opzioniRuolo, 'Scegli il ruolo…', 'toggleGiocatoreModificaRuoloAperto', giocatoreModificaRuoloAperto, 'onGiocatoreModificaRuoloChange') + '</div>' +
       '<div><span class="field-label">Piede preferito</span>' + sceltaSingolaSelettoreHtml(giocatoreModificaPiede, opzioniPiede, 'Scegli il piede preferito…', 'toggleGiocatoreModificaPiedeAperto', giocatoreModificaPiedeAperto, 'onGiocatoreModificaPiedeChange') + '</div>' +
       '<div><span class="field-label">Squadre</span>' + squadreSelettoreHtml(giocatoreModificaSquadreIds, 'toggleGiocatoreModificaSquadreAperto', giocatoreModificaSquadreAperto, 'onGiocatoreModificaSquadraToggle') + '</div>' +
