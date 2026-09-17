@@ -3100,16 +3100,21 @@ function submitCertificato() {
   reader.onload = function () {
     var base64 = String(reader.result).split(',')[1] || '';
 
-    // Nome e cognome scritti a mano (nessun menu a tendina, né per il
-    // Giocatore né per l'Admin): se corrispondono a un giocatore vero
-    // del database lo troviamo qui e il certificato viene caricato come
-    // sempre. Se non corrispondono a nessuno, non esiste
-    // un giocatore a cui collegarlo: al posto di /api/certificati
+    // Per il Giocatore l'id è già certo: è quello del proprio account,
+    // deciso dal server (giocatoreIdentitaId), non quello che compare
+    // scritto nei campi (che sono comunque bloccati, vedi
+    // viewCertificatoCarica). Così non c'è nessun modo, nemmeno
+    // forzando i campi, di caricare un certificato a nome di un altro
+    // giocatore. Solo per l'Admin, che scrive il nome a mano, cerchiamo
+    // qui il giocatore corrispondente: se non lo troviamo, non esiste
+    // un giocatore a cui collegarlo, e al posto di /api/certificati
     // chiamiamo /api/certificati/segnalazione, che salva comunque la
     // segnalazione (foto compresa) in Certificati medici > Segnalazioni
     // e avvisa l'Admin, senza salvare nulla come certificato vero.
     var idTrovato = null;
-    if (giocatoriCache && giocatoriCache.length) {
+    if (perGiocatore) {
+      idTrovato = giocatoreIdentitaId || null;
+    } else if (giocatoriCache && giocatoriCache.length) {
       var nomeConfronto = caricaNomeDigitato.trim().toLowerCase();
       var cognomeConfronto = caricaCognomeDigitato.trim().toLowerCase();
       var trovato = giocatoriCache.filter(function (g) {
@@ -3208,39 +3213,72 @@ function viewCertificatoCarica() {
 
   var perGiocatore = !!(accesso && accesso.ruolo === 'giocatore');
 
-  // Al giocatore precompiliamo subito nome e cognome con i suoi, così
-  // non deve riscriverli: restano comunque modificabili come per
-  // l'Admin. Lo facciamo solo se i campi sono ancora vuoti (appena
-  // entrati nella pagina: vengono azzerati ad ogni cambio di pagina),
-  // così non sovrascriviamo quello che sta scrivendo.
-  if (perGiocatore && !caricaNomeDigitato && !caricaCognomeDigitato) {
-    var mioGiocatorePerCarica = giocatoreLoggato();
-    if (mioGiocatorePerCarica) {
-      caricaNomeDigitato = mioGiocatorePerCarica.nome || '';
-      caricaCognomeDigitato = mioGiocatorePerCarica.cognome || '';
+  // Per il Giocatore, nome e cognome sono sempre e solo i suoi, presi
+  // dal database: non può scriverli né cambiarli, così non ha nessuna
+  // possibilità di caricare un certificato a nome di un altro
+  // giocatore. Aspettiamo che l'elenco dei giocatori sia stato
+  // caricato per essere sicuri di mostrare il nome giusto; se il Suo
+  // account non risulta ancora collegato a nessun giocatore (caso raro)
+  // mostriamo la stessa card "Chi sei?" usata nel resto del sito, al
+  // posto del modulo di caricamento.
+  var mioGiocatorePerCarica = null;
+  var corpoBloccante = null;
+  if (perGiocatore) {
+    if (giocatoriCache === null || giocatoriCache === 'loading') {
+      corpoBloccante = '<p style="color:var(--ink-muted);">Caricamento&hellip;</p>';
+    } else if (giocatoriCache.error) {
+      corpoBloccante = '<div class="qcard"><span><strong>&#9888;&#65039; Non disponibile.</strong> Non &egrave; stato possibile leggere i dati dal server: verificare che il server sia avviato e collegato al database.</span></div>';
+    } else {
+      mioGiocatorePerCarica = giocatoreLoggato();
+      if (!mioGiocatorePerCarica) {
+        corpoBloccante = identitaGiocatoreCardHtml();
+      } else {
+        caricaNomeDigitato = mioGiocatorePerCarica.nome || '';
+        caricaCognomeDigitato = mioGiocatorePerCarica.cognome || '';
+      }
     }
   }
 
-  // Stesso modulo per tutti, Admin compreso: si scrive nome e cognome
-  // a mano, nessun menu a tendina. Se corrispondono a un giocatore
-  // vero del database viene riconosciuto in automatico al momento
-  // dell'invio (vedi submitCertificato()); altrimenti il certificato
-  // non pu&ograve; essere salvato subito, ma resta comunque visibile
-  // come segnalazione in Certificati medici &gt; Segnalazioni, da
-  // collegare al giocatore giusto (magari il nome era scritto in modo
-  // diverso) oppure da scartare.
+  if (corpoBloccante) {
+    return '' +
+    '<section class="wrap" style="padding-top:40px;">' +
+      '<div class="back-link" onclick="navigate(\'certificati\')">' + ICONS.arrowLeft + ' Torna a Certificati medici</div>' +
+    '</section>' +
+    '<section class="wrap">' +
+      '<span class="eyebrow-pill">Certificati medici</span>' +
+      '<h1 style="font-size:1.8rem;">Carica certificato</h1>' +
+    '</section>' +
+    '<section class="wrap" style="padding:26px 40px 56px;max-width:900px;">' + corpoBloccante + '</section>';
+  }
+
+  // L'Admin scrive nome e cognome a mano, nessun menu a tendina: se
+  // corrispondono a un giocatore vero del database viene riconosciuto
+  // in automatico al momento dell'invio (vedi submitCertificato());
+  // altrimenti il certificato non pu&ograve; essere salvato subito, ma
+  // resta comunque visibile come segnalazione in Certificati medici
+  // &gt; Segnalazioni, da collegare al giocatore giusto (magari il nome
+  // era scritto in modo diverso) oppure da scartare. Il Giocatore
+  // invece vede solo il proprio nome, non modificabile (vedi sopra).
   var campoStileCarica = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
-  var pickerHtml = '' +
-    '<span class="field-label">' + (perGiocatore ? 'Come si chiama?' : 'Nome del giocatore') + '</span>' +
-    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">' +
-      '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(caricaNomeDigitato) + '" oninput="onCaricaNomeChange(event)" style="' + campoStileCarica + '"></div>' +
-      '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(caricaCognomeDigitato) + '" oninput="onCaricaCognomeChange(event)" style="' + campoStileCarica + '"></div>' +
-    '</div>' +
-    '<p style="color:var(--ink-muted);font-size:.8rem;margin:4px 0 0;">' +
-      (perGiocatore
-        ? 'Se corrisponde a un giocatore della societ&agrave; il certificato viene collegato a lui in automatico; altrimenti non viene salvato, ma resta comunque visibile all\'Admin come segnalazione.'
-        : 'Se il nome corrisponde a un giocatore della societ&agrave; il certificato viene collegato a lui in automatico; altrimenti resta come segnalazione da gestire a mano, in Certificati medici &gt; Segnalazioni.') +
-    '</p>';
+  var pickerHtml;
+  if (perGiocatore) {
+    var campoStileCaricaBloccato = campoStileCarica + 'opacity:.7;cursor:not-allowed;';
+    pickerHtml = '' +
+      '<span class="field-label">Nome e cognome</span>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">' +
+        '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(caricaNomeDigitato) + '" readonly style="' + campoStileCaricaBloccato + '"></div>' +
+        '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(caricaCognomeDigitato) + '" readonly style="' + campoStileCaricaBloccato + '"></div>' +
+      '</div>' +
+      '<p style="color:var(--ink-muted);font-size:.8rem;margin:4px 0 0;">Il certificato viene sempre caricato a Suo nome: non pu&ograve; essere cambiato.</p>';
+  } else {
+    pickerHtml = '' +
+      '<span class="field-label">Nome del giocatore</span>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">' +
+        '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(caricaNomeDigitato) + '" oninput="onCaricaNomeChange(event)" style="' + campoStileCarica + '"></div>' +
+        '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(caricaCognomeDigitato) + '" oninput="onCaricaCognomeChange(event)" style="' + campoStileCarica + '"></div>' +
+      '</div>' +
+      '<p style="color:var(--ink-muted);font-size:.8rem;margin:4px 0 0;">Se il nome corrisponde a un giocatore della societ&agrave; il certificato viene collegato a lui in automatico; altrimenti resta come segnalazione da gestire a mano, in Certificati medici &gt; Segnalazioni.</p>';
+  }
 
   var fileLabel = caricaFile ? escapeHtml(caricaFile.name) : 'Trascina qui la foto oppure scegli un file';
 

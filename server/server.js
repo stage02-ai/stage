@@ -1107,7 +1107,21 @@ app.get('/api/certificati/archivio', async (req, res) => {
 // salvata nello Storage di Supabase, e nel database resta solo il suo
 // percorso, non la foto stessa.
 app.post('/api/certificati', async (req, res) => {
-  const { id_giocatore, foto_base64, foto_mime, data_rilascio, nota } = req.body || {};
+  let { id_giocatore, foto_base64, foto_mime, data_rilascio, nota } = req.body || {};
+
+  // Un Giocatore può caricare un certificato solo per sé stesso: qui
+  // ignoriamo del tutto quello che arriva dal sito e usiamo sempre e
+  // solo l'id del giocatore a cui è collegato il suo account (letto
+  // dal server in richiedeAccesso, non modificabile dal browser), così
+  // non può in nessun modo far risultare un certificato a nome di un
+  // altro giocatore. Vale solo per il ruolo Giocatore: l'Admin può
+  // ancora scegliere il giocatore per cui carica.
+  if (req.utente.ruolo === 'giocatore') {
+    if (!req.utente.idGiocatore) {
+      return res.status(403).json({ errore: 'Il Suo account non è collegato a nessun giocatore: non può caricare certificati. Contatti l\'Admin.' });
+    }
+    id_giocatore = req.utente.idGiocatore;
+  }
 
   if (!id_giocatore || !foto_base64 || !data_rilascio) {
     return res.status(400).json({ errore: 'Servono id_giocatore, foto_base64 e data_rilascio.' });
