@@ -1600,12 +1600,12 @@ var impostazioniPasswordInCorso = false;
 var impostazioniPasswordFatta = false;
 
 // Modifica di nome, cognome ed email dalla scheda Account di
-// Impostazioni. "Inizializzato" serve solo per copiare, la prima
-// volta che si apre quella scheda dopo l'accesso (o dopo un cambio
-// pagina), i valori attuali dentro questi campi modificabili: da lì
-// in poi restano quello che la persona sta scrivendo, finché non
-// cambia pagina (vedi il reset dentro l'ascoltatore "hashchange").
-var impostazioniAccountInizializzato = false;
+// Impostazioni. Di norma questi dati si vedono soltanto (di sola
+// lettura): "ModificaAttiva" diventa vera solo cliccando la matita,
+// mostrando allora i campi da compilare; si torna alla sola lettura
+// annullando o dopo un salvataggio riuscito (vedi apriModificaAccount()
+// e annullaModificaAccount() più sotto).
+var impostazioniAccountModificaAttiva = false;
 var impostazioniAccountNome = '';
 var impostazioniAccountCognome = '';
 var impostazioniAccountEmail = '';
@@ -1719,6 +1719,26 @@ function onImpostazioniAccountNomeChange(e) { impostazioniAccountNome = e.target
 function onImpostazioniAccountCognomeChange(e) { impostazioniAccountCognome = e.target.value; impostazioniAccountFatta = false; }
 function onImpostazioniAccountEmailChange(e) { impostazioniAccountEmail = e.target.value; impostazioniAccountFatta = false; }
 
+// Richiamata dalla matita accanto a "Il Suo account": entra in
+// modalità modifica, copiando negli input i valori attuali (non
+// quello che era rimasto scritto l'ultima volta, se annullato senza
+// salvare).
+function apriModificaAccount() {
+  impostazioniAccountNome = accesso ? (accesso.nome || '') : '';
+  impostazioniAccountCognome = accesso ? (accesso.cognome || '') : '';
+  impostazioniAccountEmail = accesso ? (accesso.email || '') : '';
+  impostazioniAccountErrore = '';
+  impostazioniAccountFatta = false;
+  impostazioniAccountModificaAttiva = true;
+  render();
+}
+
+function annullaModificaAccount() {
+  impostazioniAccountModificaAttiva = false;
+  impostazioniAccountErrore = '';
+  render();
+}
+
 // Salva le modifiche a nome, cognome ed email fatte nella scheda
 // Account di Impostazioni. Nome e cognome (e l'email scritta sulla
 // tabella "persona", usata per esempio per le notifiche sui
@@ -1791,6 +1811,7 @@ function confermaImpostazioniAccount() {
       giocatoriCache = null;
       certificatiCache = null;
       archivioCache = null;
+      impostazioniAccountModificaAttiva = false;
       impostazioniAccountFatta = true;
       render();
     })
@@ -2130,7 +2151,7 @@ window.addEventListener('hashchange', function () {
   impostazioniPasswordErrore = '';
   impostazioniPasswordInCorso = false;
   impostazioniPasswordFatta = false;
-  impostazioniAccountInizializzato = false;
+  impostazioniAccountModificaAttiva = false;
   impostazioniAccountNome = '';
   impostazioniAccountCognome = '';
   impostazioniAccountEmail = '';
@@ -2736,16 +2757,6 @@ function cambiaTabImpostazioni(tab) {
 function viewImpostazioni() {
   var campoStileImpostazioni = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
 
-  // La prima volta che si apre la scheda Account dopo l'accesso (o
-  // dopo un cambio pagina, che azzera "Inizializzato"), i campi
-  // modificabili partono dai valori attuali della persona.
-  if (!impostazioniAccountInizializzato && accesso) {
-    impostazioniAccountNome = accesso.nome || '';
-    impostazioniAccountCognome = accesso.cognome || '';
-    impostazioniAccountEmail = accesso.email || '';
-    impostazioniAccountInizializzato = true;
-  }
-
   var tabsHtml = '' +
     '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:22px 0 4px;">' +
       '<span class="badge ' + (impostazioniTab === 'account' ? 'badge-ok' : 'badge-none') + '" style="cursor:pointer;" onclick="cambiaTabImpostazioni(\'account\')">Account</span>' +
@@ -2781,21 +2792,35 @@ function viewImpostazioni() {
           '</div>' +
         '</div>' +
       '</div>';
-  } else {
+  } else if (impostazioniAccountModificaAttiva) {
     contenutoHtml = '' +
       '<div class="qcard" style="max-width:420px;">' +
         '<div>' +
-          '<p style="font-weight:700;margin-bottom:4px;">Il Suo account</p>' +
-          '<p style="color:var(--ink-muted);font-size:.85rem;margin-bottom:14px;">Pu&ograve; modificare qui il Suo nome, cognome ed email di accesso.</p>' +
+          '<p style="font-weight:700;margin-bottom:4px;">Modifica dati account</p>' +
           '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(impostazioniAccountNome) + '" oninput="onImpostazioniAccountNomeChange(event)" style="' + campoStileImpostazioni + '"></div>' +
             '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(impostazioniAccountCognome) + '" oninput="onImpostazioniAccountCognomeChange(event)" style="' + campoStileImpostazioni + '"></div>' +
             '<div><span class="field-label">Email di accesso</span><input type="email" value="' + escapeHtml(impostazioniAccountEmail) + '" oninput="onImpostazioniAccountEmailChange(event)" style="' + campoStileImpostazioni + '"></div>' +
-            rigaDettaglio('Ruolo', accesso && accesso.ruolo === 'admin' ? 'Admin' : 'Giocatore') +
             (impostazioniAccountErrore ? '<p style="color:var(--late);font-size:.85rem;margin:0;">' + escapeHtml(impostazioniAccountErrore) + '</p>' : '') +
-            (impostazioniAccountFatta ? '<p style="color:var(--ok);font-weight:700;font-size:.85rem;margin:0;">' + (impostazioniAccountEmailRichiesta ? 'Nome e cognome salvati. Le abbiamo mandato un\'email di conferma al nuovo indirizzo: il cambio dell\'email di accesso sar&agrave; attivo solo dopo aver cliccato sul link ricevuto.' : 'Dati aggiornati.') + '</p>' : '') +
-            '<span class="pill pill-solid" style="cursor:pointer;align-self:flex-start;opacity:' + (impostazioniAccountInCorso ? '.6' : '1') + ';" onclick="' + (impostazioniAccountInCorso ? '' : 'confermaImpostazioniAccount()') + '">' + (impostazioniAccountInCorso ? 'Salvataggio&hellip;' : 'Salva modifiche') + '</span>' +
+            '<div style="display:flex;gap:10px;">' +
+              '<span class="btn-reject" style="flex:1;" onclick="annullaModificaAccount()">Annulla</span>' +
+              '<span class="btn-approve" style="flex:1;" onclick="' + (impostazioniAccountInCorso ? '' : 'confermaImpostazioniAccount()') + '">' + (impostazioniAccountInCorso ? 'Salvataggio&hellip;' : 'Salva') + '</span>' +
+            '</div>' +
           '</div>' +
+        '</div>' +
+      '</div>';
+  } else {
+    contenutoHtml = '' +
+      '<div class="qcard" style="max-width:420px;">' +
+        '<div>' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">' +
+            '<p style="font-weight:700;margin:0;">Il Suo account</p>' +
+            '<span class="icon-btn" title="Modifica i Suoi dati" onclick="apriModificaAccount()">' + ICONS.edit + '</span>' +
+          '</div>' +
+          rigaDettaglio('Nome e cognome', accesso ? escapeHtml(accesso.cognome + ' ' + accesso.nome) : '') +
+          rigaDettaglio('Email di accesso', accesso && accesso.email ? escapeHtml(accesso.email) : '') +
+          rigaDettaglio('Ruolo', accesso && accesso.ruolo === 'admin' ? 'Admin' : 'Giocatore') +
+          (impostazioniAccountFatta ? '<p style="color:var(--ok);font-weight:700;font-size:.85rem;margin:10px 0 0;">' + (impostazioniAccountEmailRichiesta ? 'Nome e cognome salvati. Le abbiamo mandato un\'email di conferma al nuovo indirizzo: il cambio dell\'email di accesso sar&agrave; attivo solo dopo aver cliccato sul link ricevuto.' : 'Dati aggiornati.') + '</p>' : '') +
         '</div>' +
       '</div>';
   }
