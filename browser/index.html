@@ -1427,6 +1427,17 @@ var tokenSessioneCorrente = null;
 
 var accesso = null; // null finché non si è fatto login, altrimenti {ruolo, nome, cognome}
 
+// Diventa true appena sappiamo con certezza se chi ha aperto il sito ha
+// già una sessione valida oppure no (vedi aggiornaAccessoDaSessione() più
+// sotto): finché resta false, render() mostra un semplice "Caricamento…"
+// invece della schermata di accesso. Senza questo accorgimento, chi ha
+// già fatto login vedrebbe comunque comparire per un attimo la
+// schermata di accesso a ogni apertura/aggiornamento della pagina
+// (mentre il sito controlla ancora se la sessione salvata è valida): un
+// attimo che, con una connessione lenta, può bastare a dare l'idea di
+// essere stati disconnessi.
+var accessoControllato = false;
+
 // Stato del modulo di login (email e password).
 var loginEmailDigitata = '';
 var loginPasswordDigitata = '';
@@ -1645,6 +1656,7 @@ function aggiornaAccessoDaSessione(sessione) {
   if (!sessione) {
     accesso = null;
     giocatoreIdentitaId = null;
+    accessoControllato = true;
     render();
     return;
   }
@@ -1654,6 +1666,7 @@ function aggiornaAccessoDaSessione(sessione) {
     .then(function (dati) {
       accesso = { ruolo: dati.ruolo, nome: dati.nome, cognome: dati.cognome };
       giocatoreIdentitaId = dati.idGiocatore || null;
+      accessoControllato = true;
       if (accesso.ruolo === 'giocatore' && (!location.hash || location.hash === '#')) {
         location.hash = '#/certificati';
       }
@@ -1665,6 +1678,7 @@ function aggiornaAccessoDaSessione(sessione) {
       // sbaglio, o non ancora collegato): non può usare il sito.
       accesso = null;
       giocatoreIdentitaId = null;
+      accessoControllato = true;
       loginErrore = 'Questo account non è abilitato ad accedere al sito. Contatti l\'Admin.';
       if (supabaseClient) { supabaseClient.auth.signOut(); }
       render();
@@ -2766,7 +2780,25 @@ function corpoStoricoSegnalazioni() {
     notif = '<div class="qcard">Nessuna notifica mandata finora.</div>';
   } else {
     var etichetteTipo = { approvato: 'Approvato', scartato: 'Scartato', in_scadenza: 'In scadenza', scaduto: 'Scaduto' };
-    notif = '<div class="list">' + notificheStoricoCache.map(function (n) {
+
+    // Un giocatore compare una volta per ogni email che gli è stata
+    // mandata nel tempo: qui teniamo solo la più recente per ciascuno,
+    // usando l'email del destinatario per riconoscerlo (più affidabile
+    // di nome e cognome, che in teoria potrebbero coincidere tra due
+    // persone diverse). L'elenco arriva dal server già ordinato dalla
+    // notifica più recente alla più vecchia (vedi GET /api/notifiche),
+    // quindi la prima volta che incontriamo un destinatario è già la
+    // sua notifica più recente: il risultato resta ordinato allo
+    // stesso modo, con il giocatore con l'email più recente per primo.
+    var giaVisti = {};
+    var unaPerGiocatore = notificheStoricoCache.filter(function (n) {
+      var chiave = n.destinatario || ('nome:' + (n.cognome_giocatore || '') + '|' + (n.nome_giocatore || ''));
+      if (giaVisti[chiave]) return false;
+      giaVisti[chiave] = true;
+      return true;
+    });
+
+    notif = '<div class="list">' + unaPerGiocatore.map(function (n) {
       var nomeCompleto = (n.nome_giocatore || n.cognome_giocatore) ? (escapeHtml(n.cognome_giocatore || '') + ' ' + escapeHtml(n.nome_giocatore || '')) : 'Giocatore';
       return '' +
       '<div class="qcard cert-row" style="flex-direction:row;">' +
@@ -3930,6 +3962,11 @@ function render() {
     return;
   }
 
+  if (!accessoControllato) {
+    document.getElementById('app').innerHTML = '<div style="width:100%;padding:120px 20px;text-align:center;color:var(--ink-muted);">Caricamento&hellip;</div>';
+    return;
+  }
+
   if (!accesso) {
     document.getElementById('app').innerHTML = '<div style="width:100%;">' + viewAccesso() + '</div>';
     return;
@@ -4025,15 +4062,22 @@ function avviaApp() {
       }
 
       // Da qui in poi, ogni cambio della sessione (login, logout,
-      // rinnovo automatico del token, oppure una sessione già presente
-      // ritrovata subito qui sotto) aggiorna da solo "accesso".
+      // rinnovo automatico del token) aggiorna da solo "accesso".
       supabaseClient.auth.onAuthStateChange(function (evento, sessione) {
         if (!impostaPasswordAttiva) { aggiornaAccessoDaSessione(sessione); }
       });
 
+      // Controlliamo ANCHE subito, qui, se c'è già una sessione salvata
+      // da una visita precedente (chi ha già fatto login e non ha fatto
+      // "Esci"): non ci basta fidarci che ci pensi da solo
+      // onAuthStateChange qui sopra, perché non in tutti i casi la
+      // richiama per una sessione già presente al primo avvio, e in
+      // quel caso il sito continuerebbe a credere di non avere nessuna
+      // sessione (mostrando la schermata di accesso anche a chi aveva
+      // già fatto il login) finché non si rifà da capo il login a mano.
       supabaseClient.auth.getSession().then(function (risultato) {
         var sessione = risultato && risultato.data ? risultato.data.session : null;
-        if (!sessione) { render(); } // altrimenti ci pensa onAuthStateChange, appena sopra
+        if (!impostaPasswordAttiva) { aggiornaAccessoDaSessione(sessione); }
       });
     })
     .catch(function (errore) {
