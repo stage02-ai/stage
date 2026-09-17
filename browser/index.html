@@ -1205,7 +1205,7 @@ var giocatoriVista = 'attivi'; // 'attivi' | 'archiviati', filtro della pagina S
 var giocatoriRicerca = ''; // testo della barra di ricerca nella pagina Squadre > Giocatori (solo Admin)
 var archivioCache = null;    // elenco "grezzo" di tutti i certificati, per la pagina Archivio
 var certGiocatoreFotoCertId = null; // id del certificato di cui è stata già richiesta la foto nella pagina "Gestione" vista da un Giocatore
-var archivioFiltro = 'tutti'; // 'tutti' | 'da_approvare' | 'approvati' | 'archiviati'
+var archivioFiltro = 'tutti'; // 'tutti' | 'da_approvare' | 'approvati' | 'archiviati' | 'scartati'
 var gestioneRicerca = ''; // testo della barra di ricerca in Certificati > Gestione (solo Admin, unica a poter vedere questa pagina)
 var archivioRicerca = ''; // testo della barra di ricerca in Certificati > Archivio (solo Admin)
 
@@ -1852,6 +1852,15 @@ var certDetailFotoNuovoLoading = false;
 var certDetailFotoCorrenteUrl = null;
 var certDetailFotoCorrenteLoading = false;
 
+// Revoca di un certificato già approvato (per errore): a differenza di
+// "Scarta" sul certificato nuovo (che non chiede nulla), qui l'Admin
+// deve scrivere per forza un motivo prima di confermare. certRevocaApertaId
+// tiene aperto il modulo per scrivere il motivo, solo per quel certificato.
+var certRevocaApertaId = null;
+var certRevocaMotivo = '';
+var certRevocaInviando = false;
+var certRevocaErrore = null;
+
 // Form "Carica certificato": nome e cognome scritti a mano, sia da
 // chi è entrato come Giocatore sia dall'Admin (nessun menu a tendina).
 var caricaNomeDigitato = '';
@@ -1946,6 +1955,10 @@ window.addEventListener('hashchange', function () {
   certDetailFotoNuovoLoading = false;
   certDetailFotoCorrenteUrl = null;
   certDetailFotoCorrenteLoading = false;
+  certRevocaApertaId = null;
+  certRevocaMotivo = '';
+  certRevocaInviando = false;
+  certRevocaErrore = null;
   certGiocatoreFotoCertId = null;
   segnalazioneApertaId = null;
   segnalazioneFotoUrl = null;
@@ -3330,8 +3343,9 @@ function viewCertificatoCarica() {
 }
 
 function statusInfo(stato) {
-  if (stato === 'approvato') return { label: 'Approvato', cls: 'badge badge-ok' };
-  return { label: 'Caricato', cls: 'badge badge-pending' };
+  if (stato === 'approvato') return { label: 'Approvato', cls: 'badge badge-ok', style: '' };
+  if (stato === 'scartato') return { label: 'Scartato', cls: 'badge', style: 'border-color:var(--late);color:var(--late);' };
+  return { label: 'Caricato', cls: 'badge badge-pending', style: '' };
 }
 
 // Pallino colorato in base alla scadenza del certificato (indipendente
@@ -3364,11 +3378,37 @@ function trovaVoceCertificati(giocatoreId) {
   })[0] || null;
 }
 
+// Blocco per scartare un certificato già approvato (per errore): se il
+// modulo per il motivo non è ancora aperto, mostra solo il pulsante che
+// lo apre; una volta aperto, mostra la casella di testo obbligatoria e
+// i pulsanti Annulla/Conferma. Il motivo è obbligatorio: a differenza
+// di certReject() (per un certificato ancora in attesa), qui si sta
+// annullando qualcosa che era già stato approvato, quindi va spiegato.
+function revocaCertificatoBloccoHtml(certId) {
+  if (certRevocaApertaId !== certId) {
+    return '' +
+      '<div class="detail-actions" style="max-width:none;">' +
+        '<span class="btn-reject" onclick="apriRevocaCertificato(' + certId + ')">Scarta comunque</span>' +
+      '</div>';
+  }
+
+  return '' +
+    '<div style="margin-top:4px;padding-top:14px;border-top:1px solid var(--border);">' +
+      '<span class="field-label">Motivo dello scarto</span>' +
+      '<textarea oninput="onRevocaCertificatoMotivoChange(event)" placeholder="Scriva perch&eacute; questo certificato, gi&agrave; approvato, va scartato&hellip;" style="width:100%;min-height:70px;padding:10px 12px;border-radius:12px;border:1.5px solid var(--border);font-size:.88rem;font-family:inherit;background:var(--surface);color:var(--ink);resize:vertical;margin-top:6px;">' + escapeHtml(certRevocaMotivo) + '</textarea>' +
+      (certRevocaErrore ? '<p style="color:var(--late);font-size:.82rem;margin-top:6px;">' + escapeHtml(certRevocaErrore) + '</p>' : '') +
+      '<div class="detail-actions" style="max-width:none;margin-top:10px;">' +
+        '<span class="btn-reject" onclick="annullaRevocaCertificato()">Annulla</span>' +
+        '<span class="btn-approve" style="background:var(--late);border-color:var(--late);" onclick="confermaRevocaCertificato(' + certId + ')">' + (certRevocaInviando ? 'Invio in corso&hellip;' : 'Conferma scarto') + '</span>' +
+      '</div>' +
+    '</div>';
+}
+
 // Costruisce il blocco "foto + descrizione" di uno dei due lati del
 // confronto (il certificato nuovo, oppure quello attuale). Se non c'è
 // nessun certificato di quel tipo per il giocatore, mostra solo un
 // messaggio al posto della foto e delle informazioni.
-function blocchettoCertificato(cert, etichetta, fotoUrl, fotoLoading, testoVuoto, mostraAzioni) {
+function blocchettoCertificato(cert, etichetta, fotoUrl, fotoLoading, testoVuoto, mostraAzioni, mostraRevoca) {
   var fotoHtml;
   if (!cert) {
     fotoHtml = '<div class="doc-preview">' + ICONS.docBig + '<span style="font-size:.85rem;text-align:center;padding:0 16px;">' + testoVuoto + '</span></div>';
@@ -3391,9 +3431,11 @@ function blocchettoCertificato(cert, etichetta, fotoUrl, fotoLoading, testoVuoto
     var info = statusInfo(cert.stato);
     var scad = scadenzaInfo(cert.data_scadenza);
     var statoValoreHtml = '' +
-      '<span class="' + info.cls + '">' + info.label + '</span>' +
+      '<span class="' + info.cls + '" style="' + info.style + '">' + info.label + '</span>' +
       (scad ? ' &nbsp;<span class="status-dot ' + scad.cls + '" style="display:inline-block;vertical-align:middle;" title="' + scad.label + '"></span> ' + scad.label : '');
     var notaValoreHtml = notaTroncataHtml(cert.nota, 40);
+
+    var mostraRevocaOra = !!(mostraRevoca && cert.stato === 'approvato');
 
     descrizioneHtml = '' +
       '<h3 style="font-size:.8rem;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin:0;">' + etichetta + '</h3>' +
@@ -3403,12 +3445,15 @@ function blocchettoCertificato(cert, etichetta, fotoUrl, fotoLoading, testoVuoto
       rigaDettaglio('Data di scadenza', cert.data_scadenza ? formattaDataBreve(cert.data_scadenza) : '') +
       rigaDettaglio('Caricato il', formattaData(cert.data_caricamento)) +
       rigaDettaglio('Approvato il', cert.data_approvazione ? formattaData(cert.data_approvazione) : '') +
+      (cert.stato === 'scartato' ? rigaDettaglio('Scartato il', cert.data_scarto ? formattaData(cert.data_scarto) : '') : '') +
+      (cert.stato === 'scartato' ? rigaDettaglio('Motivo dello scarto', notaTroncataHtml(cert.motivo_scarto, 40)) : '') +
       (mostraAzioni
         ? '<div class="detail-actions" style="max-width:none;">' +
             '<span class="btn-reject" onclick="certReject()">Scarta</span>' +
             '<span class="btn-approve" onclick="certApprove()">Approva</span>' +
           '</div>'
-        : '');
+        : '') +
+      (mostraRevocaOra ? revocaCertificatoBloccoHtml(cert.id) : '');
   }
 
   // Un solo riquadro (paragrafo) per lato, non due affiancati: la foto
@@ -3570,7 +3615,8 @@ function viewCertificatoApprovazione() {
       trovato.corrente, 'Certificato attuale',
       certDetailFotoCorrenteUrl, certDetailFotoCorrenteLoading,
       'Nessun certificato attuale registrato.',
-      false
+      false,
+      true
     );
 
     return '' +
@@ -3830,10 +3876,16 @@ function viewCertificatoArchivio() {
       var daApprovare = [];
       var approvati = [];
       var archiviati = [];
+      var scartati = [];
 
       elencoVisibile.forEach(function (c) {
         if (c.giocatore_archiviato || c.precedente_al_ripristino) {
           archiviati.push(c);
+        } else if (c.stato === 'scartato') {
+          // Un certificato scartato dopo essere stato approvato (vedi
+          // "Scarta comunque" nella pagina Gestione): resta qui, non
+          // tra i "Da approvare", che sono solo quelli ancora in attesa.
+          scartati.push(c);
         } else if (c.stato !== 'approvato') {
           daApprovare.push(c);
         } else if (c.data_approvazione === ultimaApprovazionePerGiocatore[c.id_giocatore]) {
@@ -3845,10 +3897,11 @@ function viewCertificatoArchivio() {
 
       filtriHtml = '' +
         '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 8px;">' +
-          filtroArchivioBtn('tutti', 'Tutti', daApprovare.length + approvati.length + archiviati.length) +
+          filtroArchivioBtn('tutti', 'Tutti', daApprovare.length + approvati.length + archiviati.length + scartati.length) +
           filtroArchivioBtn('da_approvare', 'Da approvare', daApprovare.length) +
           filtroArchivioBtn('approvati', 'Approvati', approvati.length) +
           filtroArchivioBtn('archiviati', 'Archiviati', archiviati.length) +
+          filtroArchivioBtn('scartati', 'Scartati', scartati.length) +
         '</div>';
 
       body = '' +
@@ -3857,7 +3910,9 @@ function viewCertificatoArchivio() {
         (archivioFiltro === 'tutti' || archivioFiltro === 'approvati'
           ? sezioneArchivio('Approvati', approvati, 'Nessun certificato approvato e ancora valido.') : '') +
         (archivioFiltro === 'tutti' || archivioFiltro === 'archiviati'
-          ? sezioneArchivio('Archiviati', archiviati, 'Nessun certificato archiviato: nessun giocatore ha ancora sostituito un certificato approvato con uno più recente.', false) : '');
+          ? sezioneArchivio('Archiviati', archiviati, 'Nessun certificato archiviato: nessun giocatore ha ancora sostituito un certificato approvato con uno più recente.', false) : '') +
+        (archivioFiltro === 'tutti' || archivioFiltro === 'scartati'
+          ? sezioneArchivio('Scartati', scartati, 'Nessun certificato scartato dopo essere stato approvato.', false) : '');
     }
   }
 
@@ -3905,6 +3960,10 @@ function sezioneArchivio(titolo, elenco, testoVuoto, mostraPallino) {
       var dettagli = [];
       if (c.data_rilascio) dettagli.push('Rilascio ' + formattaDataBreve(c.data_rilascio));
       if (c.data_scadenza) dettagli.push('Scadenza ' + formattaDataBreve(c.data_scadenza));
+      if (c.stato === 'scartato') {
+        if (c.data_scarto) dettagli.push('Scartato il ' + formattaDataBreve(c.data_scarto));
+        if (c.motivo_scarto) dettagli.push('Motivo: ' + escapeHtml(c.motivo_scarto));
+      }
       return '' +
       '<div class="qcard cert-row cert-row-clickable" style="flex-direction:row;" onclick="vediFotoArchivio(' + c.id + ')">' +
         '<div style="font-weight:700;flex:0 0 200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(nomeCompleto) + '</div>' +
@@ -3942,6 +4001,10 @@ function certOpen(id) {
   certDetailFotoNuovoLoading = false;
   certDetailFotoCorrenteUrl = null;
   certDetailFotoCorrenteLoading = false;
+  certRevocaApertaId = null;
+  certRevocaMotivo = '';
+  certRevocaInviando = false;
+  certRevocaErrore = null;
 
   var trovato = trovaVoceCertificati(id);
 
@@ -3970,6 +4033,10 @@ function certBack() {
   certDetailFotoNuovoLoading = false;
   certDetailFotoCorrenteUrl = null;
   certDetailFotoCorrenteLoading = false;
+  certRevocaApertaId = null;
+  certRevocaMotivo = '';
+  certRevocaInviando = false;
+  certRevocaErrore = null;
   render();
 }
 
@@ -4008,6 +4075,74 @@ function certReject() {
       certificatiCache = null;
       archivioCache = null;
       certBack();
+    });
+}
+
+// Apre, sotto il certificato attuale (già approvato), il modulo per
+// scrivere il motivo prima di scartarlo comunque: a differenza di
+// certReject() (per un certificato ancora in attesa, dove non serve
+// spiegare nulla), qui il motivo è obbligatorio, perché si sta
+// annullando qualcosa che era già stato approvato.
+function apriRevocaCertificato(id) {
+  certRevocaApertaId = id;
+  certRevocaMotivo = '';
+  certRevocaErrore = null;
+  render();
+}
+
+function annullaRevocaCertificato() {
+  certRevocaApertaId = null;
+  certRevocaMotivo = '';
+  certRevocaErrore = null;
+  render();
+}
+
+function onRevocaCertificatoMotivoChange(e) {
+  certRevocaMotivo = e.target.value;
+}
+
+// Scarta un certificato GIÀ APPROVATO (per errore): a differenza di
+// certReject(), qui il certificato non viene eliminato dal database,
+// resta con stato "scartato" e il motivo scritto, così ne rimane
+// traccia in Archivio. Da questo momento il giocatore non ha più un
+// certificato attuale valido e può caricarne subito uno nuovo.
+function confermaRevocaCertificato(id) {
+  if (!(certRevocaMotivo || '').trim()) {
+    certRevocaErrore = 'Scriva il motivo per cui questo certificato va scartato.';
+    render();
+    return;
+  }
+
+  certRevocaInviando = true;
+  certRevocaErrore = null;
+  render();
+
+  fetch('/api/certificati/' + encodeURIComponent(id) + '/revoca', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ motivo: certRevocaMotivo.trim() }),
+  })
+    .then(function (res) {
+      return res.json().then(function (corpo) {
+        if (!res.ok) {
+          var errore = new Error(corpo && corpo.errore ? corpo.errore : 'Richiesta non riuscita');
+          errore.messaggioServer = corpo && corpo.errore;
+          throw errore;
+        }
+        return corpo;
+      });
+    })
+    .then(function () {
+      certRevocaInviando = false;
+      certificatiCache = null;
+      giocatoriCache = null; // il giocatore non ha più un certificato attuale
+      archivioCache = null;
+      certBack();
+    })
+    .catch(function (errore) {
+      certRevocaInviando = false;
+      certRevocaErrore = (errore && errore.messaggioServer) ? errore.messaggioServer : 'Errore durante l\'operazione: riprovi.';
+      render();
     });
 }
 

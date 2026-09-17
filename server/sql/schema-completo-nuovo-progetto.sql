@@ -115,7 +115,10 @@ create table if not exists certificati_medici (
 
   -- 'attesa'    = caricato, in attesa di approvazione
   -- 'approvato' = approvato dal responsabile
-  stato text not null default 'attesa' check (stato in ('attesa', 'approvato')),
+  -- 'scartato'  = era stato approvato, ma poi scartato dall'Admin (per
+  --   esempio per errore): resta qui, con il motivo, invece di essere
+  --   eliminato, per tenerne traccia nell'Archivio.
+  stato text not null default 'attesa' check (stato in ('attesa', 'approvato', 'scartato')),
 
   -- percorso della foto dentro lo Storage di Supabase (non la foto
   -- vera e propria: quella resta nello Storage, qui teniamo solo
@@ -125,6 +128,12 @@ create table if not exists certificati_medici (
   data_rilascio date,
   data_scadenza date,
   nota text,
+
+  -- Compilati solo se il certificato viene scartato dopo essere stato
+  -- approvato (stato 'scartato'): il motivo scritto dall'Admin e
+  -- quando è successo.
+  motivo_scarto text,
+  data_scarto timestamptz,
 
   data_caricamento timestamptz not null default now(),
   data_approvazione timestamptz

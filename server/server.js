@@ -1027,8 +1027,12 @@ app.get('/api/certificati', async (req, res) => {
         .sort((a, b) => new Date(b.data_approvazione || 0) - new Date(a.data_approvazione || 0));
       const corrente = approvati[0] || null;
 
+      // Solo "attesa": un certificato scartato dopo essere stato
+      // approvato (stato 'scartato', vedi POST /api/certificati/:id/revoca)
+      // non deve ricomparire qui come se fosse un nuovo caricamento da
+      // valutare.
       const inAttesa = certificati
-        .filter((c) => c.stato !== 'approvato')
+        .filter((c) => c.stato === 'attesa')
         .sort((a, b) => new Date(b.data_caricamento) - new Date(a.data_caricamento));
       const nuovo = inAttesa[0] || null;
 
@@ -1064,7 +1068,7 @@ app.get('/api/certificati/archivio', async (req, res) => {
   const { data, error } = await supabase
     .from('certificati_medici')
     .select(
-      'id, id_giocatore, stato, data_caricamento, data_approvazione, data_rilascio, data_scadenza, nota, giocatori(persona(nome, cognome), archiviato, certificati_azzerati_al)'
+      'id, id_giocatore, stato, data_caricamento, data_approvazione, data_rilascio, data_scadenza, nota, motivo_scarto, data_scarto, giocatori(persona(nome, cognome), archiviato, certificati_azzerati_al)'
     )
     .order('data_caricamento', { ascending: false });
 
@@ -1086,6 +1090,8 @@ app.get('/api/certificati/archivio', async (req, res) => {
       data_rilascio: c.data_rilascio,
       data_scadenza: c.data_scadenza,
       nota: c.nota,
+      motivo_scarto: c.motivo_scarto,
+      data_scarto: c.data_scarto,
       // Se il giocatore è stato archiviato (eliminato dall'elenco
       // Giocatori), anche tutti i suoi certificati finiscono tra gli
       // "Archiviati", qualsiasi sia il loro stato.
@@ -1796,7 +1802,8 @@ async function inviaEmailVerificaAdmin(dettagli) {
 // mancante...), viene solo scritto un avviso nel registro del server,
 // senza far fallire l'approvazione o lo scarto.
 //
-// tipo: 'approvato' oppure 'scartato' — cambia il testo dell'email e
+// tipo: 'approvato', 'scartato', 'in_scadenza', 'scaduto', 'collegato'
+// oppure 'revocato' — cambia il testo dell'email e
 // viene salvato anche nella riga di "notifiche_inviate" insieme a
 // nome e cognome del giocatore, così lo storico resta leggibile anche
 // se in seguito il certificato viene eliminato (succede sempre per
@@ -1844,6 +1851,19 @@ async function registraNotifica(certificato, tipo) {
       corpoHtml =
         '<p>Gentile' + (nomeGiocatore ? ' ' + nomeGiocatore : ' utente') + ',</p>' +
         '<p>Abbiamo ricevuto e collegato al Suo profilo il certificato medico che aveva caricato: &egrave; ora in attesa di essere valutato.</p>';
+    } else if (tipo === 'revocato') {
+      // Mandata quando l'Admin scarta un certificato che era già stato
+      // approvato (per esempio perché approvato per errore): a
+      // differenza dello scarto di un certificato in attesa, qui il
+      // motivo è sempre scritto dall'Admin (obbligatorio nel sito), e lo
+      // includiamo nell'email così il giocatore sa perché.
+      oggetto = 'Certificato medico scartato';
+      corpoHtml =
+        '<p>Gentile' + (nomeGiocatore ? ' ' + nomeGiocatore : ' utente') + ',</p>' +
+        '<p>Il Suo certificato medico, che era stato approvato, &egrave; stato successivamente scartato' +
+        (certificato.motivo_scarto ? ': ' + certificato.motivo_scarto : '') +
+        '.</p>' +
+        '<p>Carichi il prima possibile un nuovo certificato dal sito.</p>';
     } else {
       oggetto = 'Certificato medico approvato';
       corpoHtml =
@@ -1965,6 +1985,53 @@ app.patch('/api/certificati/:id', richiedeAdmin, async (req, res) => {
   res.json(data);
 });
 
+// Scarta un certificato GIÀ APPROVATO (per esempio se l'Admin si
+// accorge di averlo approvato per errore): a differenza dello scarto
+// di un certificato ancora "in attesa" (vedi DELETE più sotto), qui il
+// certificato NON viene eliminato dal database. Resta con stato
+// "scartato" e il motivo scritto dall'Admin, così ne resta traccia
+// nella pagina Archivio. Da questo momento il giocatore non ha più un
+// certificato "attuale": può caricarne subito uno nuovo.
+app.post('/api/certificati/:id/revoca', richiedeAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { motivo } = req.body || {};
+
+  if (!motivo || !motivo.trim()) {
+    return res.status(400).json({ errore: 'Scriva il motivo per cui questo certificato va scartato.' });
+  }
+
+  const { data: certificatoEsistente, error: erroreLettura } = await supabase
+    .from('certificati_medici')
+    .select('id, stato')
+    .eq('id', id)
+    .single();
+
+  if (erroreLettura || !certificatoEsistente) {
+    return res.status(404).json({ errore: 'Certificato non trovato.' });
+  }
+  if (certificatoEsistente.stato !== 'approvato') {
+    return res.status(400).json({
+      errore: 'Questa azione vale solo per un certificato già approvato: per uno ancora in attesa, si usa "Scarta" nella pagina Gestione.',
+    });
+  }
+
+  const { data, error } = await supabase
+    .from('certificati_medici')
+    .update({ stato: 'scartato', motivo_scarto: motivo.trim(), data_scarto: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Errore nella revoca del certificato:', error.message);
+    return res.status(500).json({ errore: error.message });
+  }
+
+  await registraNotifica(data, 'revocato');
+
+  res.json(data);
+});
+
 // Scarta un certificato "nuovo": viene eliminato del tutto dal
 // database, come se non fosse mai stato caricato. Il certificato
 // "attuale" del giocatore (se ne aveva uno) non viene toccato.
@@ -1975,9 +2042,20 @@ app.delete('/api/certificati/:id', richiedeAdmin, async (req, res) => {
 
   const { data: certificato } = await supabase
     .from('certificati_medici')
-    .select('id, id_giocatore, nota, foto_path')
+    .select('id, id_giocatore, stato, nota, foto_path')
     .eq('id', id)
     .single();
+
+  // Un certificato già approvato non va eliminato del tutto (si
+  // perderebbe ogni traccia): per quello c'è la revoca qui sopra
+  // (POST /api/certificati/:id/revoca), che lo tiene nello storico
+  // con lo stato "scartato" e il motivo. Questa rotta resta solo per
+  // scartare un certificato ancora "in attesa".
+  if (certificato && certificato.stato === 'approvato') {
+    return res.status(400).json({
+      errore: 'Questo certificato è già approvato: per scartarlo va usata la revoca, non l\'eliminazione diretta.',
+    });
+  }
 
   if (certificato) {
     await registraNotifica(certificato, 'scartato');
