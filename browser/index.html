@@ -1894,6 +1894,7 @@ function viewImpostaPassword() {
 // ---------- stato dell'interfaccia ----------
 
 var menuOpen = false;
+var impostazioniTab = 'account'; // 'account' | 'password' | 'aspetto'
 var certView = 'list';       // 'list' | 'detail' (dentro Gestione)
 var certSelectedId = null;   // id del GIOCATORE selezionato (non del certificato: un giocatore può averne due)
 
@@ -2104,6 +2105,7 @@ window.addEventListener('hashchange', function () {
 
   segnalazioniTab = 'gestire';
   segnalazioniRicerca = '';
+  impostazioniTab = 'account';
 
   giocatoreIdentitaSelezionataId = null;
   giocatoreIdentitaErrore = '';
@@ -2611,53 +2613,69 @@ function temaBtn(valore, etichetta) {
       JSON.stringify(valore) + ')\'>' + escapeHtml(etichetta) + '</span>';
 }
 
+// Cambia la scheda aperta nella pagina Impostazioni ('account',
+// 'password' o 'aspetto'): stesso meccanismo già usato per le due
+// schede di Segnalazioni (vedi cambiaTabSegnalazioni).
+function cambiaTabImpostazioni(tab) {
+  impostazioniTab = tab;
+  render();
+}
+
 function viewImpostazioni() {
   var campoStileImpostazioni = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
 
-  var accountHtml = '' +
-    '<div class="qcard">' +
-      '<div>' +
-        '<p style="font-weight:700;margin-bottom:4px;">Il Suo account</p>' +
-        rigaDettaglio('Nome e cognome', accesso ? escapeHtml(accesso.cognome + ' ' + accesso.nome) : '') +
-        rigaDettaglio('Email di accesso', accesso && accesso.email ? escapeHtml(accesso.email) : '') +
-        rigaDettaglio('Ruolo', accesso && accesso.ruolo === 'admin' ? 'Admin' : 'Giocatore') +
-      '</div>' +
+  var tabsHtml = '' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:22px 0 4px;">' +
+      '<span class="badge ' + (impostazioniTab === 'account' ? 'badge-ok' : 'badge-none') + '" style="cursor:pointer;" onclick="cambiaTabImpostazioni(\'account\')">Account</span>' +
+      '<span class="badge ' + (impostazioniTab === 'password' ? 'badge-ok' : 'badge-none') + '" style="cursor:pointer;" onclick="cambiaTabImpostazioni(\'password\')">Password</span>' +
+      '<span class="badge ' + (impostazioniTab === 'aspetto' ? 'badge-ok' : 'badge-none') + '" style="cursor:pointer;" onclick="cambiaTabImpostazioni(\'aspetto\')">Aspetto</span>' +
     '</div>';
 
-  var passwordHtml = '' +
-    '<div class="qcard">' +
-      '<div>' +
-        '<p style="font-weight:700;margin-bottom:4px;">Cambia password</p>' +
-        '<p style="color:var(--ink-muted);font-size:.85rem;margin-bottom:14px;">Scelga una nuova password per accedere al sito.</p>' +
-        '<div style="display:flex;flex-direction:column;gap:12px;max-width:360px;">' +
-          '<div><span class="field-label">Nuova password (almeno 8 caratteri)</span><input type="password" value="' + escapeHtml(impostazioniPasswordValore) + '" oninput="onImpostazioniPasswordChange(event)" style="' + campoStileImpostazioni + '"></div>' +
-          '<div><span class="field-label">Ripeta la password</span><input type="password" value="' + escapeHtml(impostazioniPasswordConferma) + '" oninput="onImpostazioniPasswordConfermaChange(event)" onkeydown="if(event.key===\'Enter\'){confermaImpostazioniPassword();}" style="' + campoStileImpostazioni + '"></div>' +
-          (impostazioniPasswordErrore ? '<p style="color:var(--late);font-size:.85rem;margin:0;">' + escapeHtml(impostazioniPasswordErrore) + '</p>' : '') +
-          (impostazioniPasswordFatta ? '<p style="color:var(--ok);font-weight:700;font-size:.85rem;margin:0;">Password aggiornata.</p>' : '') +
-          '<span class="pill pill-solid" style="cursor:pointer;align-self:flex-start;opacity:' + (impostazioniPasswordInCorso ? '.6' : '1') + ';" onclick="' + (impostazioniPasswordInCorso ? '' : 'confermaImpostazioniPassword()') + '">' + (impostazioniPasswordInCorso ? 'Salvataggio&hellip;' : 'Salva password') + '</span>' +
+  var contenutoHtml;
+  if (impostazioniTab === 'password') {
+    contenutoHtml = '' +
+      '<div class="qcard" style="max-width:420px;">' +
+        '<div>' +
+          '<p style="font-weight:700;margin-bottom:4px;">Cambia password</p>' +
+          '<p style="color:var(--ink-muted);font-size:.85rem;margin-bottom:14px;">Scelga una nuova password per accedere al sito.</p>' +
+          '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div><span class="field-label">Nuova password (almeno 8 caratteri)</span><input type="password" value="' + escapeHtml(impostazioniPasswordValore) + '" oninput="onImpostazioniPasswordChange(event)" style="' + campoStileImpostazioni + '"></div>' +
+            '<div><span class="field-label">Ripeta la password</span><input type="password" value="' + escapeHtml(impostazioniPasswordConferma) + '" oninput="onImpostazioniPasswordConfermaChange(event)" onkeydown="if(event.key===\'Enter\'){confermaImpostazioniPassword();}" style="' + campoStileImpostazioni + '"></div>' +
+            (impostazioniPasswordErrore ? '<p style="color:var(--late);font-size:.85rem;margin:0;">' + escapeHtml(impostazioniPasswordErrore) + '</p>' : '') +
+            (impostazioniPasswordFatta ? '<p style="color:var(--ok);font-weight:700;font-size:.85rem;margin:0;">Password aggiornata.</p>' : '') +
+            '<span class="pill pill-solid" style="cursor:pointer;align-self:flex-start;opacity:' + (impostazioniPasswordInCorso ? '.6' : '1') + ';" onclick="' + (impostazioniPasswordInCorso ? '' : 'confermaImpostazioniPassword()') + '">' + (impostazioniPasswordInCorso ? 'Salvataggio&hellip;' : 'Salva password') + '</span>' +
+          '</div>' +
         '</div>' +
-      '</div>' +
-    '</div>';
-
-  var temaHtml = '' +
-    '<div class="qcard">' +
-      '<div>' +
-        '<p style="font-weight:700;margin-bottom:4px;">Tema</p>' +
-        '<p style="color:var(--ink-muted);font-size:.85rem;margin-bottom:14px;">Vale solo per questo dispositivo: ogni persona che apre il sito pu&ograve; scegliere il proprio.</p>' +
-        '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
-          temaBtn('chiaro', 'Chiaro') +
-          temaBtn('scuro', 'Scuro') +
+      '</div>';
+  } else if (impostazioniTab === 'aspetto') {
+    contenutoHtml = '' +
+      '<div class="qcard" style="max-width:420px;">' +
+        '<div>' +
+          '<p style="font-weight:700;margin-bottom:4px;">Tema</p>' +
+          '<p style="color:var(--ink-muted);font-size:.85rem;margin-bottom:14px;">Vale solo per questo dispositivo: ogni persona che apre il sito pu&ograve; scegliere il proprio.</p>' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+            temaBtn('chiaro', 'Chiaro') +
+            temaBtn('scuro', 'Scuro') +
+          '</div>' +
         '</div>' +
-      '</div>' +
-    '</div>';
-
-  var contenutoHtml = '<div style="display:flex;flex-direction:column;gap:20px;max-width:520px;">' + accountHtml + passwordHtml + temaHtml + '</div>';
+      '</div>';
+  } else {
+    contenutoHtml = '' +
+      '<div class="qcard" style="max-width:420px;">' +
+        '<div>' +
+          '<p style="font-weight:700;margin-bottom:4px;">Il Suo account</p>' +
+          rigaDettaglio('Nome e cognome', accesso ? escapeHtml(accesso.cognome + ' ' + accesso.nome) : '') +
+          rigaDettaglio('Email di accesso', accesso && accesso.email ? escapeHtml(accesso.email) : '') +
+          rigaDettaglio('Ruolo', accesso && accesso.ruolo === 'admin' ? 'Admin' : 'Giocatore') +
+        '</div>' +
+      '</div>';
+  }
 
   return '' +
   '<section class="wrap" style="padding-top:40px;"><div class="page-title">' +
     '<div><span class="eyebrow-pill">Area personale</span><h1 style="font-size:2rem;">Impostazioni</h1></div>' +
   '</div></section>' +
-  '<section class="wrap" style="padding-bottom:56px;">' + contenutoHtml + '</section>';
+  '<section class="wrap" style="padding-bottom:56px;">' + tabsHtml + contenutoHtml + '</section>';
 }
 
 function viewCertificatiHub() {
