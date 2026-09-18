@@ -9,5 +9,8 @@
   ],
   "routes": [
     { "src": "/(.*)", "dest": "server/server.js" }
+  ],
+  "crons": [
+    { "path": "/api/cron/controlla-scadenze", "schedule": "0 5 * * *" }
   ]
 }

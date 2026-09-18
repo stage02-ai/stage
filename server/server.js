@@ -66,6 +66,45 @@ app.get('/api/config', (req, res) => {
   });
 });
 
+// Punto d'ingresso per il controllo automatico delle scadenze QUANDO IL
+// SITO È ONLINE su Vercel (vedi anche, in fondo al file, il commento
+// su "if (!process.env.VERCEL)": online il server non resta mai acceso
+// per conto suo, quindi un "ogni 24 ore" fatto con setInterval non
+// partirebbe mai davvero). La soluzione è un "Cron Job" di Vercel
+// (configurato in vercel.json, chiave "crons"): è Vercel stesso a
+// chiamare questa rotta una volta al giorno, da solo, anche se nessuno
+// visita il sito in quel momento.
+//
+// Questa rotta resta VOLUTAMENTE fuori da "richiedeAccesso" qui sotto
+// (per lo stesso motivo di "/api/config" sopra: deve rispondere prima
+// e indipendentemente da qualunque login), ma non deve essere
+// raggiungibile da chiunque conosca l'indirizzo: per questo controlla
+// un codice segreto (CRON_SECRET), da impostare tra le variabili
+// d'ambiente del progetto su Vercel (Project Settings > Environment
+// Variables). Quando è impostato, Vercel manda da solo questo stesso
+// codice, come intestazione "Authorization", ogni volta che attiva il
+// Cron Job: se il codice che arriva non corrisponde, la richiesta
+// viene rifiutata.
+app.get('/api/cron/controlla-scadenze', async (req, res) => {
+  const segretoAtteso = process.env.CRON_SECRET;
+  const intestazioneAutorizzazione = req.headers.authorization || '';
+  const segretoRicevuto = intestazioneAutorizzazione.indexOf('Bearer ') === 0
+    ? intestazioneAutorizzazione.slice(7)
+    : null;
+
+  if (!segretoAtteso || segretoRicevuto !== segretoAtteso) {
+    return res.status(401).json({ errore: 'Non autorizzato.' });
+  }
+
+  try {
+    await controllaScadenzeCertificati();
+    res.json({ ok: true });
+  } catch (erroreInatteso) {
+    console.error('Errore nel controllo automatico delle scadenze (Cron):', erroreInatteso.message);
+    res.status(500).json({ errore: erroreInatteso.message });
+  }
+});
+
 // Controlla il token di chi sta chiamando e, se è valido, recupera la
 // persona collegata (con il suo ruolo). Se manca il token, non è
 // valido, oppure non corrisponde a nessuna persona abilitata (cioè con
@@ -2242,14 +2281,15 @@ if (!process.env.VERCEL) {
     console.log(`Server avviato: http://localhost:${PORT}`);
   });
 
-  // Il controllo automatico delle scadenze (subito all'avvio, poi ogni
-  // 24 ore) ha senso solo quando il server resta acceso per conto suo,
-  // come in locale: online su Vercel, ogni richiesta fa partire
-  // un'esecuzione nuova che si spegne subito dopo aver risposto, quindi
-  // un giro ogni 24 ore impostato così non partirebbe mai davvero. Per
-  // farlo funzionare anche online serve un passaggio in più (un "Cron
-  // Job" di Vercel, che richiama il sito da solo una volta al giorno):
-  // si può aggiungere in un secondo momento, quando serve.
+  // Il controllo automatico delle scadenze fatto così (subito
+  // all'avvio, poi ogni 24 ore) ha senso solo quando il server resta
+  // acceso per conto suo, come in locale: online su Vercel, ogni
+  // richiesta fa partire un'esecuzione nuova che si spegne subito dopo
+  // aver risposto, quindi un giro ogni 24 ore impostato così non
+  // partirebbe mai davvero. Online il controllo gira invece tramite un
+  // "Cron Job" di Vercel, che richiama una volta al giorno la rotta
+  // GET /api/cron/controlla-scadenze definita più sopra (vedi
+  // vercel.json, chiave "crons", e il commento su quella rotta).
   controllaScadenzeCertificati();
   setInterval(controllaScadenzeCertificati, 24 * 60 * 60 * 1000);
 }
