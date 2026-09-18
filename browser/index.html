@@ -1869,7 +1869,15 @@ function confermaImpostazioniAccount() {
 // cambia (login, logout, rinnovo del token, sessione già presente
 // riaprendo il sito): è la sola funzione che decide il valore di
 // "accesso".
-function aggiornaAccessoDaSessione(sessione) {
+// Quante volte ritentare "/api/chi-sono" prima di arrenderci, quando il
+// problema NON è un rifiuto vero (vedi sotto) ma solo un intoppo di
+// connessione (per esempio il server appena "risvegliato" da Vercel
+// dopo un po' di inattività, che può metterci un momento in più a
+// rispondere la primissima volta).
+var TENTATIVI_CHI_SONO = 2;
+
+function aggiornaAccessoDaSessione(sessione, tentativo) {
+  tentativo = tentativo || 0;
   tokenSessioneCorrente = sessione ? sessione.access_token : null;
 
   if (!sessione) {
@@ -1881,7 +1889,20 @@ function aggiornaAccessoDaSessione(sessione) {
   }
 
   fetch('/api/chi-sono')
-    .then(function (res) { if (!res.ok) throw new Error('non autorizzato'); return res.json(); })
+    .then(function (res) {
+      if (!res.ok) {
+        var erroreHttp = new Error('risposta ' + res.status);
+        // Solo 401 ("token non valido o scaduto") e 403 ("account non
+        // collegato a nessuna persona abilitata") sono risposte VERE
+        // del nostro server su chi è l'account: qualunque altro
+        // problema (per esempio 500/502/503, o la richiesta che non
+        // arriva affatto) è un intoppo temporaneo, non un giudizio
+        // sull'account, e va trattato diversamente qui sotto.
+        erroreHttp.rifiutoVero = (res.status === 401 || res.status === 403);
+        throw erroreHttp;
+      }
+      return res.json();
+    })
     .then(function (dati) {
       accesso = { ruolo: dati.ruolo, nome: dati.nome, cognome: dati.cognome, email: dati.email };
       giocatoreIdentitaId = dati.idGiocatore || null;
@@ -1891,15 +1912,44 @@ function aggiornaAccessoDaSessione(sessione) {
       }
       render();
     })
-    .catch(function () {
-      // L'account ha fatto login su Supabase, ma non è collegato a
-      // nessuna persona abilitata (per esempio un account creato per
-      // sbaglio, o non ancora collegato): non può usare il sito.
-      accesso = null;
-      giocatoreIdentitaId = null;
+    .catch(function (errore) {
+      var rifiutoVero = !!(errore && errore.rifiutoVero);
+
+      // Non è un rifiuto vero (è un intoppo di connessione): prima di
+      // arrenderci, ritentiamo automaticamente un paio di volte, senza
+      // disconnettere nessuno né far comparire nel frattempo la
+      // schermata di accesso.
+      if (!rifiutoVero && tentativo < TENTATIVI_CHI_SONO) {
+        setTimeout(function () {
+          aggiornaAccessoDaSessione(sessione, tentativo + 1);
+        }, 1200);
+        return;
+      }
+
       accessoControllato = true;
-      loginErrore = 'Questo account non è abilitato ad accedere al sito. Contatti l\'Admin.';
-      if (supabaseClient) { supabaseClient.auth.signOut(); }
+
+      if (rifiutoVero) {
+        // L'account ha fatto login su Supabase, ma non è collegato a
+        // nessuna persona abilitata (per esempio un account creato per
+        // sbaglio, o non ancora collegato), oppure il token non è più
+        // valido: qui sì che ha senso disconnettere davvero.
+        accesso = null;
+        giocatoreIdentitaId = null;
+        loginErrore = 'Questo account non è abilitato ad accedere al sito. Contatti l\'Admin.';
+        if (supabaseClient) { supabaseClient.auth.signOut(); }
+      } else {
+        // Il problema di connessione persiste anche dopo aver
+        // riprovato: NON disconnettiamo nessuno (la sessione resta
+        // valida e salvata come prima), mostriamo solo un avviso.
+        // Questo è esattamente il punto che prima causava il problema
+        // di "ogni aggiornamento della pagina riporta al login": un
+        // singolo intoppo di rete a inizio pagina veniva scambiato per
+        // "account non abilitato" e disconnetteva subito, cancellando
+        // la sessione salvata; da quel momento in poi ogni successivo
+        // aggiornamento della pagina ripartiva senza più nessuna
+        // sessione da ritrovare.
+        loginErrore = 'Il sito non riesce a collegarsi in questo momento. Riprovi ricaricando la pagina.';
+      }
       render();
     });
 }
@@ -4559,7 +4609,25 @@ function avviaApp() {
   fetch('/api/config')
     .then(function (res) { return res.json(); })
     .then(function (configurazione) {
-      supabaseClient = window.supabase.createClient(configurazione.supabaseUrl, configurazione.supabaseAnonKey);
+      supabaseClient = window.supabase.createClient(configurazione.supabaseUrl, configurazione.supabaseAnonKey, {
+        auth: {
+          // Scriviamo qui per esteso valori che sarebbero comunque
+          // quelli di default, per essere sicuri che restino questi
+          // anche se in futuro cambiassero i default della libreria:
+          // la sessione deve restare salvata (persistSession) e
+          // rinnovarsi da sola quando sta per scadere
+          // (autoRefreshToken). "detectSessionInUrl" resta disattivato
+          // perché i link di invito/recupero password li leggiamo e
+          // gestiamo già da soli qui sotto (leggiParametriInvito()):
+          // lasciare che la libreria controlli anche lei lo stesso
+          // indirizzo (che qui serve anche per le pagine del sito, per
+          // esempio "#/certificati") è solo un rischio di interferenza
+          // in più, senza nessun vantaggio.
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: false,
+        },
+      });
 
       // Chi arriva da un link di invito o di recupero password ha, nel
       // proprio indirizzo, un token speciale: lo usiamo solo per la
@@ -4581,7 +4649,21 @@ function avviaApp() {
       // Da qui in poi, ogni cambio della sessione (login, logout,
       // rinnovo automatico del token) aggiorna da solo "accesso".
       supabaseClient.auth.onAuthStateChange(function (evento, sessione) {
-        if (!impostaPasswordAttiva) { aggiornaAccessoDaSessione(sessione); }
+        // Finché il controllo iniziale (getSession() qui sotto) non è
+        // terminato (accessoControllato ancora false), ignoriamo le
+        // notifiche di questo listener: sia getSession() sia questo
+        // listener vengono avvisati, all'avvio, se c'è già una sessione
+        // salvata, e non è garantito chi dei due arriva prima. Senza
+        // questa attesa, capitava che questo listener arrivasse per
+        // secondo dicendo (per come si inizializza la libreria, anche
+        // solo per un attimo) "nessuna sessione", annullando un accesso
+        // che il controllo iniziale aveva appena trovato valido: il
+        // risultato, per chi apriva o aggiornava il sito con una
+        // sessione già salvata, era di ritrovarsi comunque alla
+        // schermata di accesso.
+        if (!impostaPasswordAttiva && accessoControllato) {
+          aggiornaAccessoDaSessione(sessione);
+        }
       });
 
       // Controlliamo ANCHE subito, qui, se c'è già una sessione salvata
@@ -4595,6 +4677,12 @@ function avviaApp() {
       supabaseClient.auth.getSession().then(function (risultato) {
         var sessione = risultato && risultato.data ? risultato.data.session : null;
         if (!impostaPasswordAttiva) { aggiornaAccessoDaSessione(sessione); }
+      }).catch(function (errore) {
+        console.error('Impossibile leggere la sessione salvata:', errore);
+        if (!impostaPasswordAttiva) {
+          accessoControllato = true;
+          render();
+        }
       });
     })
     .catch(function (errore) {
