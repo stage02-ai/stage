@@ -6,3 +6,5 @@ node_modules/
 .env
 .DS_Store
 .vercel
+Claude outputs/
+_vecchio-sito-pubblico-*/
