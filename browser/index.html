@@ -5005,6 +5005,33 @@ function avviaApp() {
         },
       });
 
+      // Da qui in poi, ogni cambio della sessione (login, logout,
+      // rinnovo automatico del token) aggiorna da solo "accesso".
+      // Colleghiamo questo "ascoltatore" SUBITO, PRIMA dei controlli sul
+      // link di registrazione o di invito qui sotto (che a volte escono
+      // subito da questa funzione con "return"): se lo collegassimo
+      // dopo, come succedeva prima, chi arrivava da uno di quei link non
+      // avrebbe più nessuno che si accorge, più avanti, di quando fa
+      // "Esci" — e il pulsante Esci smetteva di funzionare per lui.
+      supabaseClient.auth.onAuthStateChange(function (evento, sessione) {
+        // Finché il controllo iniziale (getSession() qui sotto, oppure
+        // il completamento della schermata "Imposta password" o
+        // "Registrati") non è terminato (accessoControllato ancora
+        // false), ignoriamo le notifiche di questo listener: sia
+        // getSession() sia questo listener vengono avvisati, all'avvio,
+        // se c'è già una sessione salvata, e non è garantito chi dei
+        // due arriva prima. Senza questa attesa, capitava che questo
+        // listener arrivasse per secondo dicendo (per come si
+        // inizializza la libreria, anche solo per un attimo) "nessuna
+        // sessione", annullando un accesso che il controllo iniziale
+        // aveva appena trovato valido: il risultato, per chi apriva o
+        // aggiornava il sito con una sessione già salvata, era di
+        // ritrovarsi comunque alla schermata di accesso.
+        if (!impostaPasswordAttiva && !registrazioneAttiva && accessoControllato) {
+          aggiornaAccessoDaSessione(sessione, 0, evento);
+        }
+      });
+
       // Chi arriva da un link "Aggiungi con link WhatsApp" (vedi
       // apriGiocatoreRapido() più sopra) ha, nel proprio indirizzo, il
       // token di registrazione: mostriamo subito la schermata apposita,
@@ -5033,26 +5060,6 @@ function avviaApp() {
         });
         return;
       }
-
-      // Da qui in poi, ogni cambio della sessione (login, logout,
-      // rinnovo automatico del token) aggiorna da solo "accesso".
-      supabaseClient.auth.onAuthStateChange(function (evento, sessione) {
-        // Finché il controllo iniziale (getSession() qui sotto) non è
-        // terminato (accessoControllato ancora false), ignoriamo le
-        // notifiche di questo listener: sia getSession() sia questo
-        // listener vengono avvisati, all'avvio, se c'è già una sessione
-        // salvata, e non è garantito chi dei due arriva prima. Senza
-        // questa attesa, capitava che questo listener arrivasse per
-        // secondo dicendo (per come si inizializza la libreria, anche
-        // solo per un attimo) "nessuna sessione", annullando un accesso
-        // che il controllo iniziale aveva appena trovato valido: il
-        // risultato, per chi apriva o aggiornava il sito con una
-        // sessione già salvata, era di ritrovarsi comunque alla
-        // schermata di accesso.
-        if (!impostaPasswordAttiva && accessoControllato) {
-          aggiornaAccessoDaSessione(sessione, 0, evento);
-        }
-      });
 
       // Controlliamo ANCHE subito, qui, se c'è già una sessione salvata
       // da una visita precedente (chi ha già fatto login e non ha fatto
