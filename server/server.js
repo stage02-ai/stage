@@ -105,6 +105,128 @@ app.get('/api/cron/controlla-scadenze', async (req, res) => {
   }
 });
 
+// ---------- Registrazione di un giocatore da un link WhatsApp ----------
+//
+// Queste due rotte ("chi è" e "completa la registrazione") restano
+// VOLUTAMENTE fuori da richiedeAccesso qui sotto (per lo stesso motivo
+// di "/api/config" e "/api/cron/controlla-scadenze" più sopra): chi le
+// chiama non ha ancora un account, quindi non può mandare nessun token
+// di accesso. Al posto del login, il "segreto" che dimostra di essere
+// davvero il giocatore giusto è il token lungo e casuale dentro il
+// link stesso (vedi POST /api/giocatori/rapido e POST
+// /api/giocatori/:id/link-registrazione più sotto, dopo
+// richiedeAccesso, dove questi token vengono generati: solo l'Admin,
+// che è autenticato, può generarli).
+
+// Il sito la chiama appena apre il link di registrazione, per sapere
+// per chi è (nome e cognome, da mostrare) e se il link è ancora valido,
+// PRIMA di mostrare il modulo con cui il giocatore sceglie data di
+// nascita, email e password.
+app.get('/api/registrazione/:token', async (req, res) => {
+  const { token } = req.params;
+
+  const { data: persona, error } = await supabase
+    .from('persona')
+    .select('nome, cognome, id_account, token_registrazione_scadenza')
+    .eq('token_registrazione', token)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Errore nella lettura del token di registrazione:', error.message);
+    return res.status(500).json({ errore: error.message });
+  }
+  if (!persona || persona.id_account) {
+    return res.status(404).json({ errore: 'Questo link non è valido: controlli di averlo copiato per intero, oppure chieda all\'allenatore di generarne uno nuovo.' });
+  }
+  if (persona.token_registrazione_scadenza && new Date(persona.token_registrazione_scadenza) < new Date()) {
+    return res.status(410).json({ errore: 'Questo link è scaduto: chieda all\'allenatore di generarne uno nuovo.' });
+  }
+
+  res.json({ nome: persona.nome, cognome: persona.cognome });
+});
+
+// Completa la registrazione: il giocatore sceglie data di nascita,
+// email e password. Crea davvero l'account di accesso (Supabase Auth)
+// e lo collega alla persona già creata dall'Admin (vedi POST
+// /api/giocatori/rapido).
+app.post('/api/registrazione/:token', async (req, res) => {
+  const { token } = req.params;
+  const { data_nascita, email, password } = req.body || {};
+
+  if (!data_nascita) {
+    return res.status(400).json({ errore: 'Serve la Sua data di nascita.' });
+  }
+  const erroreData = erroreDataNascita(data_nascita);
+  if (erroreData) {
+    return res.status(400).json({ errore: erroreData });
+  }
+  if (!email || !String(email).trim()) {
+    return res.status(400).json({ errore: 'Serve la Sua email.' });
+  }
+  if (!password || String(password).length < 8) {
+    return res.status(400).json({ errore: 'La password deve avere almeno 8 caratteri.' });
+  }
+
+  const { data: persona, error: erroreLettura } = await supabase
+    .from('persona')
+    .select('id, id_account, token_registrazione_scadenza')
+    .eq('token_registrazione', token)
+    .maybeSingle();
+
+  if (erroreLettura) {
+    console.error('Errore nella lettura del token di registrazione:', erroreLettura.message);
+    return res.status(500).json({ errore: erroreLettura.message });
+  }
+  if (!persona || persona.id_account) {
+    return res.status(404).json({ errore: 'Questo link non è valido: controlli di averlo copiato per intero, oppure chieda all\'allenatore di generarne uno nuovo.' });
+  }
+  if (persona.token_registrazione_scadenza && new Date(persona.token_registrazione_scadenza) < new Date()) {
+    return res.status(410).json({ errore: 'Questo link è scaduto: chieda all\'allenatore di generarne uno nuovo.' });
+  }
+
+  // Creo davvero l'account di accesso: "email_confirm: true" salta
+  // l'email di conferma di Supabase, perché il possesso stesso del
+  // link (mandato dall'Admin su WhatsApp) è già la prova che serviva.
+  const { data: nuovoAccount, error: erroreAccount } = await supabase.auth.admin.createUser({
+    email: String(email).trim(),
+    password: String(password),
+    email_confirm: true,
+  });
+
+  if (erroreAccount) {
+    const messaggio = /already|esiste|registrat/i.test(erroreAccount.message || '')
+      ? 'Questa email è già usata da un altro account: ne scelga un\'altra.'
+      : erroreAccount.message;
+    return res.status(400).json({ errore: messaggio });
+  }
+  if (!nuovoAccount || !nuovoAccount.user) {
+    return res.status(500).json({ errore: 'Registrazione non riuscita per un motivo sconosciuto.' });
+  }
+
+  const { error: erroreCollega } = await supabase
+    .from('persona')
+    .update({
+      id_account: nuovoAccount.user.id,
+      ruolo_accesso: 'giocatore',
+      email: String(email).trim(),
+      data_nascita,
+      token_registrazione: null,
+      token_registrazione_scadenza: null,
+    })
+    .eq('id', persona.id);
+
+  if (erroreCollega) {
+    console.error('Non sono riuscito a collegare l\'account appena creato alla persona:', erroreCollega.message);
+    // L'account di accesso è stato creato ma non collegato: lo tolgo,
+    // così chi riprova non trova un'email "già usata" per un
+    // collegamento che in realtà non è mai andato a buon fine.
+    await supabase.auth.admin.deleteUser(nuovoAccount.user.id);
+    return res.status(500).json({ errore: erroreCollega.message });
+  }
+
+  res.json({ ok: true });
+});
+
 // Controlla il token di chi sta chiamando e, se è valido, recupera la
 // persona collegata (con il suo ruolo). Se manca il token, non è
 // valido, oppure non corrisponde a nessuna persona abilitata (cioè con
@@ -464,7 +586,7 @@ app.delete('/api/squadre/:id', richiedeAdmin, async (req, res) => {
 // non stanno più dentro "giocatori" ma nella tabella "persona" (condivisa
 // anche dai responsabili, per non ripetere le stesse colonne in due
 // tabelle): qui li leggiamo insieme tramite il collegamento id_persona, e
-// li restituiamo comunque "appiattiti" (id, nome, cognome, ruolo, email)
+// li restituiamo comunque "appiattiti" (id, nome, cognome, email)
 // così il resto del sito non deve accorgersi di nulla.
 app.get('/api/squadre/:id/giocatori', async (req, res) => {
   const { id } = req.params;
@@ -474,7 +596,7 @@ app.get('/api/squadre/:id/giocatori', async (req, res) => {
   // squadra (anche se ne hanno anche altre).
   const { data, error } = await supabase
     .from('giocatori_squadre')
-    .select('giocatori!inner(id, ruolo, archiviato, persona(nome, cognome, email, data_nascita))')
+    .select('giocatori!inner(id, archiviato, persona(nome, cognome, email, data_nascita))')
     .eq('id_squadra', id)
     .eq('giocatori.archiviato', false);
 
@@ -493,7 +615,6 @@ app.get('/api/squadre/:id/giocatori', async (req, res) => {
 
       return {
         id: g.id,
-        ruolo: g.ruolo,
         nome: g.persona ? g.persona.nome : '',
         cognome: g.persona ? g.persona.cognome : '',
         email: g.persona ? g.persona.email : '',
@@ -519,7 +640,7 @@ async function leggiGiocatori(archiviato) {
   // colonna "id_squadra" come prima.
   const { data, error } = await supabase
     .from('giocatori')
-    .select('id, ruolo, piede_preferito, certificati_azzerati_al, persona(nome, cognome, email, data_nascita, id_account), giocatori_squadre(squadre(id, nome)), certificati_medici(stato, data_scadenza, data_approvazione, data_caricamento)')
+    .select('id, certificati_azzerati_al, persona(nome, cognome, email, data_nascita, id_account, token_registrazione, token_registrazione_scadenza), giocatori_squadre(squadre(id, nome)), certificati_medici(stato, data_scadenza, data_approvazione, data_caricamento)')
     .eq('archiviato', archiviato);
 
   if (error) return { error };
@@ -564,14 +685,19 @@ async function leggiGiocatori(archiviato) {
         data_nascita: dataNascita,
         squadra: squadre.map((s) => s.nome).join(', '),
         squadre,
-        ruolo: g.ruolo || '',
-        piede_preferito: g.piede_preferito || '',
         anno_nascita: annoNascita,
         certificato_corrente_scadenza: corrente ? corrente.data_scadenza : null,
         // Dice al sito se questo giocatore ha già un account di accesso
         // collegato (per mostrare o no il pulsante "Manda accesso"
         // nell'elenco: vedi POST /api/giocatori/:id/invita).
         accesso_attivo: !!(g.persona && g.persona.id_account),
+        // Dice al sito se questo giocatore è stato creato con "Aggiungi
+        // con link WhatsApp" e sta ancora aspettando di completare da
+        // solo la registrazione (vedi POST /api/giocatori/rapido e
+        // POST /api/registrazione/:token più sotto): in quel caso non
+        // ha ancora né email né account, ma ha un link in attesa.
+        registrazione_in_attesa: !!(g.persona && !g.persona.id_account && g.persona.token_registrazione),
+        registrazione_scaduta: !!(g.persona && !g.persona.id_account && g.persona.token_registrazione && g.persona.token_registrazione_scadenza && new Date(g.persona.token_registrazione_scadenza) < new Date()),
       };
     })
     .sort((a, b) => a.cognome.localeCompare(b.cognome));
@@ -639,7 +765,7 @@ function erroreDataNascita(data_nascita) {
 // sceglie nel modulo: viene preso automaticamente da quello già
 // collegato alla prima squadra scelta, se c'è.
 app.post('/api/giocatori', richiedeAdmin, async (req, res) => {
-  const { nome, cognome, email, data_nascita, ruolo, id_squadre, piede_preferito } = req.body || {};
+  const { nome, cognome, email, data_nascita, id_squadre } = req.body || {};
 
   if (!nome || !String(nome).trim()) {
     return res.status(400).json({ errore: 'Serve il nome del giocatore.' });
@@ -657,17 +783,11 @@ app.post('/api/giocatori', richiedeAdmin, async (req, res) => {
   if (erroreData) {
     return res.status(400).json({ errore: erroreData });
   }
-  if (!ruolo || !String(ruolo).trim()) {
-    return res.status(400).json({ errore: 'Serve il ruolo del giocatore.' });
-  }
   // Un giocatore può appartenere a più squadre: il sito manda un elenco
   // di id (anche di una sola squadra), non più un id singolo.
   const squadreScelte = Array.isArray(id_squadre) ? id_squadre.filter(Boolean) : [];
   if (!squadreScelte.length) {
     return res.status(400).json({ errore: 'Serve almeno una squadra per il giocatore.' });
-  }
-  if (!piede_preferito || !String(piede_preferito).trim()) {
-    return res.status(400).json({ errore: 'Serve il piede preferito del giocatore.' });
   }
 
   // 1) Creo prima la persona (dati anagrafici, condivisi anche con i
@@ -713,8 +833,6 @@ app.post('/api/giocatori', richiedeAdmin, async (req, res) => {
     .insert({
       id_persona: persona.id,
       id_responsabile: responsabile ? responsabile.id : null,
-      ruolo: String(ruolo).trim(),
-      piede_preferito: String(piede_preferito).trim(),
     })
     .select('id')
     .single();
@@ -816,11 +934,181 @@ app.post('/api/giocatori/:id/invita', richiedeAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Quanti giorni resta valido un link di registrazione generato con
+// "Aggiungi con link WhatsApp" (vedi POST /api/giocatori/rapido e POST
+// /api/giocatori/:id/link-registrazione qui sotto), prima che l'Admin
+// debba generarne uno nuovo. Passato questo tempo il link smette di
+// funzionare, per sicurezza (se finisse nelle mani sbagliate o
+// restasse dimenticato in una chat).
+const GIORNI_VALIDITA_LINK_REGISTRAZIONE = 7;
+
+// Genera un codice casuale, imprevedibile, da usare come token nel
+// link di registrazione: chi lo indovina potrebbe registrarsi al posto
+// del giocatore, quindi deve essere lungo e casuale (non un numero
+// progressivo).
+function generaTokenRegistrazione() {
+  return require('crypto').randomBytes(24).toString('hex');
+}
+
+// Crea un giocatore "rapido": solo nome, cognome e squadre, senza
+// email né password. Usato dal pulsante "Aggiungi con link WhatsApp"
+// nella pagina Squadre > Giocatori (solo Admin), pensato per quando il
+// giocatore non è presente di persona: l'Admin lo aggiunge subito con
+// il minimo indispensabile, poi manda al giocatore (su WhatsApp, o come
+// preferisce) il link restituito da questa rotta. Aprendo quel link il
+// giocatore stesso sceglie data di nascita, email e password (vedi GET
+// e POST /api/registrazione/:token, più in alto in questo file, PRIMA
+// di richiedeAccesso perché quelle due rotte restano pubbliche).
+app.post('/api/giocatori/rapido', richiedeAdmin, async (req, res) => {
+  const { nome, cognome, id_squadre } = req.body || {};
+
+  if (!nome || !String(nome).trim()) {
+    return res.status(400).json({ errore: 'Serve il nome del giocatore.' });
+  }
+  if (!cognome || !String(cognome).trim()) {
+    return res.status(400).json({ errore: 'Serve il cognome del giocatore.' });
+  }
+  const squadreScelte = Array.isArray(id_squadre) ? id_squadre.filter(Boolean) : [];
+  if (!squadreScelte.length) {
+    return res.status(400).json({ errore: 'Serve almeno una squadra per il giocatore.' });
+  }
+
+  // 1) Creo la persona, senza email né data di nascita: le sceglierà il
+  //    giocatore stesso registrandosi dal link.
+  const { data: persona, error: errorePersona } = await supabase
+    .from('persona')
+    .insert({
+      nome: String(nome).trim(),
+      cognome: String(cognome).trim(),
+      email: null,
+    })
+    .select('id')
+    .single();
+
+  if (errorePersona) {
+    console.error('Errore nella creazione della persona (rapido):', errorePersona.message);
+    return res.status(500).json({ errore: errorePersona.message });
+  }
+
+  // 2) Come nella creazione normale: responsabile della PRIMA squadra
+  //    scelta, se c'è.
+  const { data: responsabile, error: erroreResponsabile } = await supabase
+    .from('responsabili')
+    .select('id')
+    .eq('id_squadra', squadreScelte[0])
+    .order('id', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (erroreResponsabile) {
+    console.error('Errore nella ricerca del responsabile della squadra:', erroreResponsabile.message);
+  }
+
+  // 3) Creo il giocatore, collegato alla persona appena creata.
+  const { data: giocatore, error: erroreGiocatore } = await supabase
+    .from('giocatori')
+    .insert({
+      id_persona: persona.id,
+      id_responsabile: responsabile ? responsabile.id : null,
+    })
+    .select('id')
+    .single();
+
+  if (erroreGiocatore) {
+    await supabase.from('persona').delete().eq('id', persona.id);
+    console.error('Errore nella creazione del giocatore (rapido):', erroreGiocatore.message);
+    return res.status(500).json({ errore: erroreGiocatore.message });
+  }
+
+  // 3bis) Lo collego a tutte le squadre scelte.
+  const { error: erroreSquadreGiocatore } = await supabase
+    .from('giocatori_squadre')
+    .insert(squadreScelte.map((idSquadra) => ({ id_giocatore: giocatore.id, id_squadra: idSquadra })));
+
+  if (erroreSquadreGiocatore) {
+    await supabase.from('giocatori').delete().eq('id', giocatore.id);
+    await supabase.from('persona').delete().eq('id', persona.id);
+    console.error('Errore nel collegare il giocatore alle squadre (rapido):', erroreSquadreGiocatore.message);
+    return res.status(500).json({ errore: erroreSquadreGiocatore.message });
+  }
+
+  // 4) Genero il token di registrazione e lo salvo, con la sua
+  //    scadenza, sulla persona appena creata.
+  const token = generaTokenRegistrazione();
+  const scadenza = new Date(Date.now() + GIORNI_VALIDITA_LINK_REGISTRAZIONE * 24 * 60 * 60 * 1000).toISOString();
+
+  const { error: erroreToken } = await supabase
+    .from('persona')
+    .update({ token_registrazione: token, token_registrazione_scadenza: scadenza })
+    .eq('id', persona.id);
+
+  if (erroreToken) {
+    console.error('Errore nel salvare il token di registrazione:', erroreToken.message);
+    return res.status(500).json({ errore: erroreToken.message });
+  }
+
+  const baseUrl = req.protocol + '://' + req.get('host');
+  const link = baseUrl + '/#/registrati/' + token;
+
+  res.status(201).json({ ok: true, id: giocatore.id, link });
+});
+
+// Genera un nuovo link di registrazione per un giocatore creato con
+// "Aggiungi con link WhatsApp" che non si è ancora registrato: usato
+// sia per mandare di nuovo il link (se il giocatore l'ha perso), sia
+// per farne uno nuovo se quello precedente è scaduto. Ogni volta che
+// viene chiamata, il link precedente smette subito di funzionare (resta
+// valido solo l'ultimo generato).
+app.post('/api/giocatori/:id/link-registrazione', richiedeAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  const { data: giocatore, error: erroreGiocatore } = await supabase
+    .from('giocatori')
+    .select('id_persona')
+    .eq('id', id)
+    .single();
+
+  if (erroreGiocatore || !giocatore) {
+    return res.status(404).json({ errore: 'Giocatore non trovato.' });
+  }
+
+  const { data: persona, error: erroreLetturaPersona } = await supabase
+    .from('persona')
+    .select('id, id_account')
+    .eq('id', giocatore.id_persona)
+    .single();
+
+  if (erroreLetturaPersona || !persona) {
+    return res.status(404).json({ errore: 'Anagrafica del giocatore non trovata.' });
+  }
+  if (persona.id_account) {
+    return res.status(400).json({ errore: 'Questo giocatore ha già un account di accesso: non serve generare un link.' });
+  }
+
+  const token = generaTokenRegistrazione();
+  const scadenza = new Date(Date.now() + GIORNI_VALIDITA_LINK_REGISTRAZIONE * 24 * 60 * 60 * 1000).toISOString();
+
+  const { error: erroreToken } = await supabase
+    .from('persona')
+    .update({ token_registrazione: token, token_registrazione_scadenza: scadenza })
+    .eq('id', persona.id);
+
+  if (erroreToken) {
+    console.error('Errore nel rigenerare il token di registrazione:', erroreToken.message);
+    return res.status(500).json({ errore: erroreToken.message });
+  }
+
+  const baseUrl = req.protocol + '://' + req.get('host');
+  const link = baseUrl + '/#/registrati/' + token;
+
+  res.json({ ok: true, link });
+});
+
 // Modifica un giocatore esistente: aggiorna sia i dati anagrafici
-// (persona) sia i dati da giocatore (ruolo, squadra, piede preferito).
-// Usato dalla matita sulla riga del giocatore nella pagina Squadre >
-// Giocatori (solo Admin). Se cambia la squadra, il responsabile si
-// aggiorna da solo in base alla nuova squadra, come alla creazione.
+// (persona) sia le squadre. Usato dalla matita sulla riga del
+// giocatore nella pagina Squadre > Giocatori (solo Admin). Se cambia la
+// squadra, il responsabile si aggiorna da solo in base alla nuova
+// squadra, come alla creazione.
 //
 // Questa stessa route serve anche per RIPRISTINARE un giocatore
 // archiviato (pulsante "Ripristina" nella sezione Archiviati): in quel
@@ -831,7 +1119,7 @@ app.post('/api/giocatori/:id/invita', richiedeAdmin, async (req, res) => {
 // essere archiviato.
 app.put('/api/giocatori/:id', richiedeAdmin, async (req, res) => {
   const { id } = req.params;
-  const { nome, cognome, email, data_nascita, ruolo, id_squadre, piede_preferito, ripristina } = req.body || {};
+  const { nome, cognome, email, data_nascita, id_squadre, ripristina } = req.body || {};
 
   if (!nome || !String(nome).trim()) {
     return res.status(400).json({ errore: 'Serve il nome del giocatore.' });
@@ -849,15 +1137,9 @@ app.put('/api/giocatori/:id', richiedeAdmin, async (req, res) => {
   if (erroreData) {
     return res.status(400).json({ errore: erroreData });
   }
-  if (!ruolo || !String(ruolo).trim()) {
-    return res.status(400).json({ errore: 'Serve il ruolo del giocatore.' });
-  }
   const squadreScelte = Array.isArray(id_squadre) ? id_squadre.filter(Boolean) : [];
   if (!squadreScelte.length) {
     return res.status(400).json({ errore: 'Serve almeno una squadra per il giocatore.' });
-  }
-  if (!piede_preferito || !String(piede_preferito).trim()) {
-    return res.status(400).json({ errore: 'Serve il piede preferito del giocatore.' });
   }
 
   // 1) Trovo l'id_persona collegato a questo giocatore.
@@ -912,8 +1194,6 @@ app.put('/api/giocatori/:id', richiedeAdmin, async (req, res) => {
   //    in POST /api/certificati).
   const datiGiocatore = {
     id_responsabile: responsabile ? responsabile.id : null,
-    ruolo: String(ruolo).trim(),
-    piede_preferito: String(piede_preferito).trim(),
   };
   if (ripristina) {
     datiGiocatore.archiviato = false;

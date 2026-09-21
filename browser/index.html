@@ -444,14 +444,166 @@ var nuovoGiocatoreCognome = '';
 var nuovoGiocatoreEmail = '';
 var nuovoGiocatoreDataNascita = '';
 var nuovoGiocatoreDataTesto = ''; // quello che si vede scritto nel campo, in formato GG/MM/AAAA (anche incompleto, mentre si sta ancora scrivendo)
-var nuovoGiocatoreRuolo = '';
-var nuovoGiocatoreRuoloAperto = false; // se l'elenco a tendina del ruolo è aperto in questo momento
 var nuovoGiocatoreSquadreIds = []; // un giocatore può appartenere a più squadre: elenco degli id scelti
 var nuovoGiocatoreSquadreAperto = false; // se l'elenco delle caselle è aperto in questo momento
-var nuovoGiocatorePiede = '';
-var nuovoGiocatorePiedeAperto = false; // se l'elenco a tendina del piede preferito è aperto in questo momento
 var nuovoGiocatoreInviando = false;
 var nuovoGiocatoreErrore = null;
+
+// ---------- "Aggiungi con link WhatsApp" ----------
+//
+// Modalità alternativa a "Nuovo giocatore" qui sopra, per quando il
+// giocatore non è presente di persona: l'Admin inserisce solo nome,
+// cognome e squadre; il sito genera un link da mandare al giocatore
+// (su WhatsApp, o come preferisce). Aprendo quel link, il giocatore
+// stesso sceglie data di nascita, email e password, e si registra da
+// solo (vedi viewRegistrazione() più sotto, e POST /api/giocatori/rapido
+// sul server).
+var giocatoreRapidoAperto = false;
+var giocatoreRapidoNome = '';
+var giocatoreRapidoCognome = '';
+var giocatoreRapidoSquadreIds = [];
+var giocatoreRapidoSquadreAperto = false;
+var giocatoreRapidoInviando = false;
+var giocatoreRapidoErrore = null;
+// Compilato dopo una creazione riuscita (o dopo aver generato/rigenerato
+// un link per un giocatore già esistente, vedi generaLinkRegistrazione
+// più sotto): { nome, cognome, link }, per mostrare il link appena
+// pronto con i pulsanti "Copia" e "Apri WhatsApp". Torna a null quando
+// si chiude quel riquadro.
+var giocatoreRapidoLinkGenerato = null;
+
+function apriGiocatoreRapido() {
+  giocatoreRapidoAperto = true;
+  giocatoreRapidoNome = '';
+  giocatoreRapidoCognome = '';
+  giocatoreRapidoSquadreIds = [];
+  giocatoreRapidoSquadreAperto = false;
+  giocatoreRapidoErrore = null;
+  giocatoreRapidoLinkGenerato = null;
+  if (teamsCache === null) { fetchTeams(); }
+  render();
+}
+function annullaGiocatoreRapido() {
+  giocatoreRapidoAperto = false;
+  giocatoreRapidoErrore = null;
+  giocatoreRapidoLinkGenerato = null;
+  render();
+}
+function onGiocatoreRapidoNomeChange(e) { giocatoreRapidoNome = e.target.value; }
+function onGiocatoreRapidoCognomeChange(e) { giocatoreRapidoCognome = e.target.value; }
+function onGiocatoreRapidoSquadraToggle(idSquadra, selezionata) {
+  giocatoreRapidoSquadreIds = aggiornaElencoSquadreScelte(giocatoreRapidoSquadreIds, idSquadra, selezionata);
+  render();
+}
+function toggleGiocatoreRapidoSquadreAperto() {
+  giocatoreRapidoSquadreAperto = !giocatoreRapidoSquadreAperto;
+  render();
+}
+
+function submitGiocatoreRapido() {
+  var nome = (giocatoreRapidoNome || '').trim();
+  var cognome = (giocatoreRapidoCognome || '').trim();
+  var idSquadre = giocatoreRapidoSquadreIds || [];
+
+  if (!nome || !cognome || !idSquadre.length) {
+    giocatoreRapidoErrore = !idSquadre.length ? 'Scelga almeno una squadra.' : 'Scriva nome e cognome.';
+    render();
+    return;
+  }
+
+  giocatoreRapidoInviando = true;
+  giocatoreRapidoErrore = null;
+  render();
+
+  fetch('/api/giocatori/rapido', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome: nome, cognome: cognome, id_squadre: idSquadre }),
+  })
+    .then(function (res) {
+      return res.json().then(function (corpo) {
+        if (!res.ok) {
+          var errore = new Error(corpo && corpo.errore ? corpo.errore : 'Richiesta non riuscita');
+          errore.messaggioServer = corpo && corpo.errore;
+          throw errore;
+        }
+        return corpo;
+      });
+    })
+    .then(function (corpo) {
+      giocatoreRapidoInviando = false;
+      giocatoriCache = null; // così l'elenco mostra subito il nuovo giocatore
+      giocatoreRapidoLinkGenerato = { nome: nome, cognome: cognome, link: corpo.link };
+      render();
+    })
+    .catch(function (errore) {
+      giocatoreRapidoInviando = false;
+      giocatoreRapidoErrore = (errore && errore.messaggioServer) || 'Non è stato possibile creare il giocatore.';
+      render();
+    });
+}
+
+// Genera (o rigenera) il link di registrazione per un giocatore già
+// esistente, creato con "Aggiungi con link WhatsApp", che non si è
+// ancora registrato: richiamata dal pulsante sulla sua riga
+// nell'elenco Giocatori. Il link precedente (se c'era) smette subito
+// di funzionare.
+var giocatoreLinkInCorsoId = null;
+
+function generaLinkRegistrazione(id, nome, cognome) {
+  if (giocatoreLinkInCorsoId) return; // evita doppi invii mentre uno è già in corso
+  giocatoreLinkInCorsoId = id;
+  render();
+
+  fetch('/api/giocatori/' + encodeURIComponent(id) + '/link-registrazione', { method: 'POST' })
+    .then(function (res) {
+      return res.json().then(function (corpo) {
+        if (!res.ok) {
+          var errore = new Error(corpo && corpo.errore ? corpo.errore : 'Richiesta non riuscita');
+          errore.messaggioServer = corpo && corpo.errore;
+          throw errore;
+        }
+        return corpo;
+      });
+    })
+    .then(function (corpo) {
+      giocatoreLinkInCorsoId = null;
+      giocatoriCache = null; // aggiorna la scadenza mostrata sulla riga
+      giocatoreRapidoLinkGenerato = { nome: nome, cognome: cognome, link: corpo.link };
+      render();
+    })
+    .catch(function (errore) {
+      giocatoreLinkInCorsoId = null;
+      render();
+      mostraToast((errore && errore.messaggioServer) || 'Non sono riuscito a generare il link.', 'errore');
+    });
+}
+
+// Copia negli appunti il link appena generato (pulsante "Copia" nel
+// riquadro che compare dopo aver creato un giocatore rapido o generato
+// un link): se il browser non lo permette, l'utente può comunque
+// selezionare e copiare il testo a mano (resta scritto per intero).
+function copiaLinkRegistrazione() {
+  if (!giocatoreRapidoLinkGenerato) return;
+  var testo = giocatoreRapidoLinkGenerato.link;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(testo).then(function () {
+      mostraToast('Link copiato.');
+    }).catch(function () {
+      mostraToast('Non sono riuscito a copiare il link: lo selezioni e lo copi a mano.', 'errore');
+    });
+  } else {
+    mostraToast('Non sono riuscito a copiare il link: lo selezioni e lo copi a mano.', 'errore');
+  }
+}
+
+// Indirizzo "wa.me" con il messaggio già scritto (il link incluso):
+// aprendolo, WhatsApp fa scegliere a chi lo usa A CHI mandarlo, senza
+// che il sito debba conoscere il numero di telefono del giocatore.
+function linkWhatsAppRegistrazione(datiLink) {
+  var messaggio = 'Ciao ' + datiLink.nome + '! Per registrarti al sito e caricare il tuo certificato medico, apri questo link: ' + datiLink.link;
+  return 'https://wa.me/?text=' + encodeURIComponent(messaggio);
+}
 
 // Id del giocatore per cui è in corso l'invio dell'email di accesso
 // (pulsante "Manda accesso" nell'elenco Giocatori): null quando nessun
@@ -477,12 +629,8 @@ function apriNuovoGiocatore() {
   nuovoGiocatoreEmail = '';
   nuovoGiocatoreDataNascita = '';
   nuovoGiocatoreDataTesto = '';
-  nuovoGiocatoreRuolo = '';
-  nuovoGiocatoreRuoloAperto = false;
   nuovoGiocatoreSquadreIds = [];
   nuovoGiocatoreSquadreAperto = false;
-  nuovoGiocatorePiede = '';
-  nuovoGiocatorePiedeAperto = false;
   nuovoGiocatoreErrore = null;
   if (teamsCache === null) { fetchTeams(); }
   render();
@@ -523,15 +671,6 @@ function onNuovoGiocatoreDataInputChange(e) {
   nuovoGiocatoreDataTesto = formattato;
   nuovoGiocatoreDataNascita = cifre.length === 8 ? dataDigitiInIso(cifre) : null;
 }
-function onNuovoGiocatoreRuoloChange(valore) {
-  nuovoGiocatoreRuolo = valore;
-  nuovoGiocatoreRuoloAperto = false;
-  render();
-}
-function toggleNuovoGiocatoreRuoloAperto() {
-  nuovoGiocatoreRuoloAperto = !nuovoGiocatoreRuoloAperto;
-  render();
-}
 function onNuovoGiocatoreSquadraToggle(idSquadra, selezionata) {
   nuovoGiocatoreSquadreIds = aggiornaElencoSquadreScelte(nuovoGiocatoreSquadreIds, idSquadra, selezionata);
   render();
@@ -540,26 +679,15 @@ function toggleNuovoGiocatoreSquadreAperto() {
   nuovoGiocatoreSquadreAperto = !nuovoGiocatoreSquadreAperto;
   render();
 }
-function onNuovoGiocatorePiedeChange(valore) {
-  nuovoGiocatorePiede = valore;
-  nuovoGiocatorePiedeAperto = false;
-  render();
-}
-function toggleNuovoGiocatorePiedeAperto() {
-  nuovoGiocatorePiedeAperto = !nuovoGiocatorePiedeAperto;
-  render();
-}
 
 function submitNuovoGiocatore() {
   var nome = (nuovoGiocatoreNome || '').trim();
   var cognome = (nuovoGiocatoreCognome || '').trim();
   var email = (nuovoGiocatoreEmail || '').trim();
   var dataNascita = nuovoGiocatoreDataNascita || '';
-  var ruolo = nuovoGiocatoreRuolo || '';
   var idSquadre = nuovoGiocatoreSquadreIds || [];
-  var piede = nuovoGiocatorePiede || '';
 
-  if (!nome || !cognome || !email || !dataNascita || !ruolo || !idSquadre.length || !piede) {
+  if (!nome || !cognome || !email || !dataNascita || !idSquadre.length) {
     nuovoGiocatoreErrore = !idSquadre.length ? 'Scelga almeno una squadra.' : 'Compila tutti i campi.';
     render();
     return;
@@ -582,9 +710,7 @@ function submitNuovoGiocatore() {
       cognome: cognome,
       email: email,
       data_nascita: dataNascita,
-      ruolo: ruolo,
       id_squadre: idSquadre,
-      piede_preferito: piede,
     }),
   })
     .then(function (res) {
@@ -663,8 +789,7 @@ function aggiornaElencoSquadreScelte(elencoAttuale, idSquadra, selezionata) {
 }
 
 // Disegna il campo "Squadre": un riquadro compatto, delle stesse
-// dimensioni di un menu a tendina normale (come "Ruolo" o "Piede
-// preferito", di cui è vicino di casa nel modulo), con scritti i nomi
+// dimensioni di un menu a tendina normale, con scritti i nomi
 // già scelti. Premendolo si apre GALLEGGIANDO sopra il resto del
 // modulo (non spinge giù gli altri campi, come farebbe un blocco
 // normale) l'elenco di caselle da spuntare o togliere.
@@ -704,12 +829,13 @@ function squadreSelettoreHtml(idsScelti, nomeFunzioneAperturaToggle, aperto, nom
   '</div>';
 }
 
-// Disegna un campo a scelta singola (per esempio "Ruolo" o "Piede
-// preferito") con lo stesso stile del campo "Squadre" qui sopra: un
-// riquadro compatto che, premuto, apre GALLEGGIANDO l'elenco delle
-// opzioni tra cui scegliere, invece del solito menu a tendina del
-// browser. Scegliendo un'opzione l'elenco si chiude da solo.
-// "opzioni" è un elenco di { valore, etichetta }.
+// Disegna un campo a scelta singola con lo stesso stile del campo
+// "Squadre" qui sopra: un riquadro compatto che, premuto, apre
+// GALLEGGIANDO l'elenco delle opzioni tra cui scegliere, invece del
+// solito menu a tendina del browser. Scegliendo un'opzione l'elenco si
+// chiude da solo. "opzioni" è un elenco di { valore, etichetta }. Non
+// più usata da nessun modulo al momento (Ruolo e Piede preferito sono
+// stati tolti), lasciata qui perché generica e riutilizzabile.
 function sceltaSingolaSelettoreHtml(valoreScelto, opzioni, placeholder, nomeFunzioneAperturaToggle, aperto, nomeFunzioneScelta) {
   var scelta = (opzioni || []).filter(function (o) { return o.valore === valoreScelto; })[0];
   var etichetta = scelta ? scelta.etichetta : placeholder;
@@ -733,21 +859,11 @@ function sceltaSingolaSelettoreHtml(valoreScelto, opzioni, placeholder, nomeFunz
   '</div>';
 }
 
-// Il modulo per aggiungere un giocatore, con tutti i dati previsti dal
-// database: dati anagrafici (nome, cognome, email, data di nascita) e
-// dati da giocatore (ruolo, squadre, piede preferito).
+// Il modulo per aggiungere un giocatore con tutti i dati: dati
+// anagrafici (nome, cognome, email, data di nascita) e squadre.
 function nuovoGiocatoreCardHtml() {
   var campoStile = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
   var oggi = new Date().toISOString().slice(0, 10);
-
-  var opzioniRuolo = ['Portiere', 'Difensore', 'Centrocampista', 'Attaccante'].map(function (r) {
-    return { valore: r, etichetta: r };
-  });
-
-  var opzioniPiede = [
-    { valore: 'destro', etichetta: 'Destro' },
-    { valore: 'sinistro', etichetta: 'Sinistro' },
-  ];
 
   return '' +
   '<div class="qcard">' +
@@ -760,8 +876,6 @@ function nuovoGiocatoreCardHtml() {
       '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(nuovoGiocatoreCognome) + '" oninput="onNuovoGiocatoreCognomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Email</span><input type="email" value="' + escapeHtml(nuovoGiocatoreEmail) + '" oninput="onNuovoGiocatoreEmailChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Data di nascita</span><input type="text" inputmode="numeric" autocomplete="off" value="' + escapeHtml(nuovoGiocatoreDataTesto) + '" placeholder="GG/MM/AAAA" maxlength="10" oninput="onNuovoGiocatoreDataInputChange(event)" style="' + campoStile + '"></div>' +
-      '<div><span class="field-label">Ruolo</span>' + sceltaSingolaSelettoreHtml(nuovoGiocatoreRuolo, opzioniRuolo, 'Scegli il ruolo…', 'toggleNuovoGiocatoreRuoloAperto', nuovoGiocatoreRuoloAperto, 'onNuovoGiocatoreRuoloChange') + '</div>' +
-      '<div><span class="field-label">Piede preferito</span>' + sceltaSingolaSelettoreHtml(nuovoGiocatorePiede, opzioniPiede, 'Scegli il piede preferito…', 'toggleNuovoGiocatorePiedeAperto', nuovoGiocatorePiedeAperto, 'onNuovoGiocatorePiedeChange') + '</div>' +
       '<div><span class="field-label">Squadre</span>' + squadreSelettoreHtml(nuovoGiocatoreSquadreIds, 'toggleNuovoGiocatoreSquadreAperto', nuovoGiocatoreSquadreAperto, 'onNuovoGiocatoreSquadraToggle') + '</div>' +
     '</div>' +
     (nuovoGiocatoreErrore ? '<p style="color:var(--late);font-size:.8rem;">' + escapeHtml(nuovoGiocatoreErrore) + '</p>' : '') +
@@ -769,6 +883,61 @@ function nuovoGiocatoreCardHtml() {
       '<span class="btn-reject" style="flex:1;" onclick="annullaNuovoGiocatore()">Annulla</span>' +
       '<span class="btn-approve" style="flex:1;" onclick="submitNuovoGiocatore()">' + (nuovoGiocatoreInviando ? 'Salvataggio&hellip;' : 'Salva') + '</span>' +
     '</div>' +
+  '</div>';
+}
+
+// Il modulo "Aggiungi con link WhatsApp": solo nome, cognome e
+// squadre. Dopo il salvataggio, al posto del modulo compare il link
+// appena generato (vedi linkRegistrazioneGeneratoCardHtml più sotto).
+function giocatoreRapidoCardHtml() {
+  if (giocatoreRapidoLinkGenerato) {
+    return linkRegistrazioneGeneratoCardHtml(giocatoreRapidoLinkGenerato, annullaGiocatoreRapido);
+  }
+
+  var campoStile = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
+
+  return '' +
+  '<div class="qcard">' +
+    '<div style="display:flex;align-items:center;gap:10px;">' +
+      '<div class="qcard-icon">' + ICONS.account + '</div>' +
+      '<h3 style="font-size:1rem;">Aggiungi con link WhatsApp</h3>' +
+    '</div>' +
+    '<p style="color:var(--ink-muted);font-size:.85rem;margin:0;">Da usare quando il giocatore non &egrave; presente: inserisca solo nome, cognome e squadra. Il sito former&agrave; un link da mandare al giocatore; lo aprir&agrave; lui per scegliere data di nascita, email e password e registrarsi da solo.</p>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">' +
+      '<div><span class="field-label">Nome</span><input type="text" value="' + escapeHtml(giocatoreRapidoNome) + '" oninput="onGiocatoreRapidoNomeChange(event)" style="' + campoStile + '"></div>' +
+      '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(giocatoreRapidoCognome) + '" oninput="onGiocatoreRapidoCognomeChange(event)" style="' + campoStile + '"></div>' +
+      '<div><span class="field-label">Squadre</span>' + squadreSelettoreHtml(giocatoreRapidoSquadreIds, 'toggleGiocatoreRapidoSquadreAperto', giocatoreRapidoSquadreAperto, 'onGiocatoreRapidoSquadraToggle') + '</div>' +
+    '</div>' +
+    (giocatoreRapidoErrore ? '<p style="color:var(--late);font-size:.8rem;">' + escapeHtml(giocatoreRapidoErrore) + '</p>' : '') +
+    '<div style="display:flex;gap:10px;">' +
+      '<span class="btn-reject" style="flex:1;" onclick="annullaGiocatoreRapido()">Annulla</span>' +
+      '<span class="btn-approve" style="flex:1;" onclick="submitGiocatoreRapido()">' + (giocatoreRapidoInviando ? 'Creazione&hellip;' : 'Crea e genera link') + '</span>' +
+    '</div>' +
+  '</div>';
+}
+
+// Riquadro con il link di registrazione appena generato (sia dopo aver
+// creato un giocatore rapido, sia dopo aver generato/rigenerato un
+// link per un giocatore già esistente): mostra il link per intero (si
+// può selezionare e copiare a mano), un pulsante "Copia link" e un
+// pulsante "Apri WhatsApp" che apre WhatsApp con il messaggio già
+// scritto, lasciando scegliere a chi lo usa a chi mandarlo.
+// "datiLink" è { nome, cognome, link }, "onChiudi" è il nome della
+// funzione da chiamare per chiudere questo riquadro.
+function linkRegistrazioneGeneratoCardHtml(datiLink, onChiudi) {
+  return '' +
+  '<div class="qcard">' +
+    '<div style="display:flex;align-items:center;gap:10px;">' +
+      '<div class="qcard-icon">' + ICONS.check + '</div>' +
+      '<h3 style="font-size:1rem;">Link pronto per ' + escapeHtml(datiLink.nome) + ' ' + escapeHtml(datiLink.cognome) + '</h3>' +
+    '</div>' +
+    '<p style="color:var(--ink-muted);font-size:.85rem;margin:0;">Lo mandi al giocatore (per esempio su WhatsApp). Resta valido per 7 giorni: dopo, dovr&agrave; generarne uno nuovo dalla sua riga nell\'elenco.</p>' +
+    '<input type="text" readonly value="' + escapeHtml(datiLink.link) + '" onclick="this.select()" style="width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.85rem;font-family:inherit;background:var(--surface);color:var(--ink);">' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+      '<span class="btn-outline" style="flex:1;min-width:140px;text-align:center;" onclick="copiaLinkRegistrazione()">Copia link</span>' +
+      '<a class="btn-approve" style="flex:1;min-width:140px;text-align:center;text-decoration:none;" href="' + linkWhatsAppRegistrazione(datiLink) + '" target="_blank" rel="noopener">Apri WhatsApp</a>' +
+    '</div>' +
+    '<span class="btn-reject" style="width:100%;text-align:center;" onclick="' + onChiudi + '()">Chiudi</span>' +
   '</div>';
 }
 
@@ -781,12 +950,8 @@ var giocatoreModificaCognome = '';
 var giocatoreModificaEmail = '';
 var giocatoreModificaDataNascita = '';
 var giocatoreModificaDataTesto = ''; // quello che si vede scritto nel campo, in formato GG/MM/AAAA (condiviso con Ripristina)
-var giocatoreModificaRuolo = '';
-var giocatoreModificaRuoloAperto = false; // se l'elenco a tendina del ruolo è aperto in questo momento (condiviso con Ripristina)
 var giocatoreModificaSquadreIds = []; // un giocatore può appartenere a più squadre: elenco degli id scelti
 var giocatoreModificaSquadreAperto = false; // se l'elenco delle caselle è aperto in questo momento (condiviso con Ripristina, come il resto di questi campi)
-var giocatoreModificaPiede = '';
-var giocatoreModificaPiedeAperto = false; // se l'elenco a tendina del piede preferito è aperto in questo momento (condiviso con Ripristina)
 var giocatoreModificaInviando = false;
 var giocatoreModificaErrore = null;
 
@@ -806,12 +971,8 @@ function apriModificaGiocatore(id) {
   giocatoreModificaEmail = p.email || '';
   giocatoreModificaDataNascita = p.data_nascita || '';
   giocatoreModificaDataTesto = dataIsoInTestoData(p.data_nascita);
-  giocatoreModificaRuolo = p.ruolo || '';
-  giocatoreModificaRuoloAperto = false;
   giocatoreModificaSquadreIds = (p.squadre || []).map(function (s) { return s.id; });
   giocatoreModificaSquadreAperto = false;
-  giocatoreModificaPiede = p.piede_preferito || '';
-  giocatoreModificaPiedeAperto = false;
   giocatoreModificaErrore = null;
   giocatoreDaEliminareId = null; // chiudo un'eventuale conferma di eliminazione aperta su un'altra riga
   if (teamsCache === null) { fetchTeams(); }
@@ -839,12 +1000,8 @@ function apriRipristinaGiocatore(id) {
   giocatoreModificaEmail = p.email || '';
   giocatoreModificaDataNascita = p.data_nascita || '';
   giocatoreModificaDataTesto = dataIsoInTestoData(p.data_nascita);
-  giocatoreModificaRuolo = p.ruolo || '';
-  giocatoreModificaRuoloAperto = false;
   giocatoreModificaSquadreIds = (p.squadre || []).map(function (s) { return s.id; });
   giocatoreModificaSquadreAperto = false;
-  giocatoreModificaPiede = p.piede_preferito || '';
-  giocatoreModificaPiedeAperto = false;
   giocatoreRipristinoErrore = null;
   giocatoreDaEliminareDefinitivamenteId = null; // chiudo un'eventuale eliminazione definitiva aperta su un'altra riga
   if (teamsCache === null) { fetchTeams(); }
@@ -862,11 +1019,9 @@ function submitRipristinoGiocatore(id) {
   var cognome = (giocatoreModificaCognome || '').trim();
   var email = (giocatoreModificaEmail || '').trim();
   var dataNascita = giocatoreModificaDataNascita || '';
-  var ruolo = giocatoreModificaRuolo || '';
   var idSquadre = giocatoreModificaSquadreIds || [];
-  var piede = giocatoreModificaPiede || '';
 
-  if (!nome || !cognome || !email || !dataNascita || !ruolo || !idSquadre.length || !piede) {
+  if (!nome || !cognome || !email || !dataNascita || !idSquadre.length) {
     giocatoreRipristinoErrore = !idSquadre.length ? 'Scelga almeno una squadra.' : 'Compila tutti i campi.';
     render();
     return;
@@ -889,9 +1044,7 @@ function submitRipristinoGiocatore(id) {
       cognome: cognome,
       email: email,
       data_nascita: dataNascita,
-      ruolo: ruolo,
       id_squadre: idSquadre,
-      piede_preferito: piede,
       ripristina: true,
     }),
   })
@@ -925,15 +1078,6 @@ function giocatoreRipristinaCardHtml(p) {
   var campoStile = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
   var oggi = new Date().toISOString().slice(0, 10);
 
-  var opzioniRuolo = ['Portiere', 'Difensore', 'Centrocampista', 'Attaccante'].map(function (r) {
-    return { valore: r, etichetta: r };
-  });
-
-  var opzioniPiede = [
-    { valore: 'destro', etichetta: 'Destro' },
-    { valore: 'sinistro', etichetta: 'Sinistro' },
-  ];
-
   return '' +
   '<div class="qcard cert-row" style="flex-direction:column;align-items:stretch;">' +
     '<div style="display:flex;align-items:center;gap:10px;">' +
@@ -946,8 +1090,6 @@ function giocatoreRipristinaCardHtml(p) {
       '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(giocatoreModificaCognome) + '" oninput="onGiocatoreModificaCognomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Email</span><input type="email" value="' + escapeHtml(giocatoreModificaEmail) + '" oninput="onGiocatoreModificaEmailChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Data di nascita</span><input type="text" inputmode="numeric" autocomplete="off" value="' + escapeHtml(giocatoreModificaDataTesto) + '" placeholder="GG/MM/AAAA" maxlength="10" oninput="onGiocatoreModificaDataInputChange(event)" style="' + campoStile + '"></div>' +
-      '<div><span class="field-label">Ruolo</span>' + sceltaSingolaSelettoreHtml(giocatoreModificaRuolo, opzioniRuolo, 'Scegli il ruolo…', 'toggleGiocatoreModificaRuoloAperto', giocatoreModificaRuoloAperto, 'onGiocatoreModificaRuoloChange') + '</div>' +
-      '<div><span class="field-label">Piede preferito</span>' + sceltaSingolaSelettoreHtml(giocatoreModificaPiede, opzioniPiede, 'Scegli il piede preferito…', 'toggleGiocatoreModificaPiedeAperto', giocatoreModificaPiedeAperto, 'onGiocatoreModificaPiedeChange') + '</div>' +
       '<div><span class="field-label">Squadre</span>' + squadreSelettoreHtml(giocatoreModificaSquadreIds, 'toggleGiocatoreModificaSquadreAperto', giocatoreModificaSquadreAperto, 'onGiocatoreModificaSquadraToggle') + '</div>' +
     '</div>' +
     (giocatoreRipristinoErrore ? '<p style="color:var(--late);font-size:.8rem;">' + escapeHtml(giocatoreRipristinoErrore) + '</p>' : '') +
@@ -980,15 +1122,6 @@ function onGiocatoreModificaDataInputChange(e) {
   giocatoreModificaDataTesto = formattato;
   giocatoreModificaDataNascita = cifre.length === 8 ? dataDigitiInIso(cifre) : null;
 }
-function onGiocatoreModificaRuoloChange(valore) {
-  giocatoreModificaRuolo = valore;
-  giocatoreModificaRuoloAperto = false;
-  render();
-}
-function toggleGiocatoreModificaRuoloAperto() {
-  giocatoreModificaRuoloAperto = !giocatoreModificaRuoloAperto;
-  render();
-}
 function onGiocatoreModificaSquadraToggle(idSquadra, selezionata) {
   giocatoreModificaSquadreIds = aggiornaElencoSquadreScelte(giocatoreModificaSquadreIds, idSquadra, selezionata);
   render();
@@ -997,26 +1130,15 @@ function toggleGiocatoreModificaSquadreAperto() {
   giocatoreModificaSquadreAperto = !giocatoreModificaSquadreAperto;
   render();
 }
-function onGiocatoreModificaPiedeChange(valore) {
-  giocatoreModificaPiede = valore;
-  giocatoreModificaPiedeAperto = false;
-  render();
-}
-function toggleGiocatoreModificaPiedeAperto() {
-  giocatoreModificaPiedeAperto = !giocatoreModificaPiedeAperto;
-  render();
-}
 
 function submitModificaGiocatore(id) {
   var nome = (giocatoreModificaNome || '').trim();
   var cognome = (giocatoreModificaCognome || '').trim();
   var email = (giocatoreModificaEmail || '').trim();
   var dataNascita = giocatoreModificaDataNascita || '';
-  var ruolo = giocatoreModificaRuolo || '';
   var idSquadre = giocatoreModificaSquadreIds || [];
-  var piede = giocatoreModificaPiede || '';
 
-  if (!nome || !cognome || !email || !dataNascita || !ruolo || !idSquadre.length || !piede) {
+  if (!nome || !cognome || !email || !dataNascita || !idSquadre.length) {
     giocatoreModificaErrore = !idSquadre.length ? 'Scelga almeno una squadra.' : 'Compila tutti i campi.';
     render();
     return;
@@ -1039,9 +1161,7 @@ function submitModificaGiocatore(id) {
       cognome: cognome,
       email: email,
       data_nascita: dataNascita,
-      ruolo: ruolo,
       id_squadre: idSquadre,
-      piede_preferito: piede,
     }),
   })
     .then(function (res) {
@@ -1071,15 +1191,6 @@ function giocatoreModificaCardHtml(p) {
   var campoStile = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
   var oggi = new Date().toISOString().slice(0, 10);
 
-  var opzioniRuolo = ['Portiere', 'Difensore', 'Centrocampista', 'Attaccante'].map(function (r) {
-    return { valore: r, etichetta: r };
-  });
-
-  var opzioniPiede = [
-    { valore: 'destro', etichetta: 'Destro' },
-    { valore: 'sinistro', etichetta: 'Sinistro' },
-  ];
-
   return '' +
   '<div class="qcard cert-row" style="flex-direction:column;align-items:stretch;">' +
     '<div style="display:flex;align-items:center;gap:10px;">' +
@@ -1091,8 +1202,6 @@ function giocatoreModificaCardHtml(p) {
       '<div><span class="field-label">Cognome</span><input type="text" value="' + escapeHtml(giocatoreModificaCognome) + '" oninput="onGiocatoreModificaCognomeChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Email</span><input type="email" value="' + escapeHtml(giocatoreModificaEmail) + '" oninput="onGiocatoreModificaEmailChange(event)" style="' + campoStile + '"></div>' +
       '<div><span class="field-label">Data di nascita</span><input type="text" inputmode="numeric" autocomplete="off" value="' + escapeHtml(giocatoreModificaDataTesto) + '" placeholder="GG/MM/AAAA" maxlength="10" oninput="onGiocatoreModificaDataInputChange(event)" style="' + campoStile + '"></div>' +
-      '<div><span class="field-label">Ruolo</span>' + sceltaSingolaSelettoreHtml(giocatoreModificaRuolo, opzioniRuolo, 'Scegli il ruolo…', 'toggleGiocatoreModificaRuoloAperto', giocatoreModificaRuoloAperto, 'onGiocatoreModificaRuoloChange') + '</div>' +
-      '<div><span class="field-label">Piede preferito</span>' + sceltaSingolaSelettoreHtml(giocatoreModificaPiede, opzioniPiede, 'Scegli il piede preferito…', 'toggleGiocatoreModificaPiedeAperto', giocatoreModificaPiedeAperto, 'onGiocatoreModificaPiedeChange') + '</div>' +
       '<div><span class="field-label">Squadre</span>' + squadreSelettoreHtml(giocatoreModificaSquadreIds, 'toggleGiocatoreModificaSquadreAperto', giocatoreModificaSquadreAperto, 'onGiocatoreModificaSquadraToggle') + '</div>' +
     '</div>' +
     (giocatoreModificaErrore ? '<p style="color:var(--late);font-size:.8rem;">' + escapeHtml(giocatoreModificaErrore) + '</p>' : '') +
@@ -1693,6 +1802,205 @@ function leggiParametriInvito() {
 function onImpostaPasswordChange(e) { impostaPasswordValore = e.target.value; }
 function onImpostaPasswordConfermaChange(e) { impostaPasswordConferma = e.target.value; }
 
+// ---------- Registrazione di un giocatore da un link WhatsApp ----------
+//
+// Chi apre un link "#/registrati/TOKEN" (generato dall'Admin con
+// "Aggiungi con link WhatsApp", vedi apriGiocatoreRapido() più sopra e
+// POST /api/giocatori/rapido sul server) non ha ancora nessun account:
+// questa schermata, mostrata al posto del solito login (vedi
+// avviaApp() e render() più sotto), gli fa scegliere data di nascita,
+// email e password, e completa da sola la registrazione.
+var registrazioneAttiva = false;
+var registrazioneToken = null;
+var registrazioneCaricamento = 'loading'; // 'loading' | 'ok' | 'errore'
+var registrazioneErroreCaricamento = '';
+var registrazioneNome = '';
+var registrazioneCognome = '';
+var registrazioneDataTesto = '';
+var registrazioneDataNascita = null;
+var registrazioneEmail = '';
+var registrazionePassword = '';
+var registrazionePasswordConferma = '';
+var registrazioneErrore = '';
+var registrazioneInCorso = false;
+
+// Legge il token dall'indirizzo (es. "#/registrati/AbC123..."): a
+// differenza di leggiParametriInvito() qui sopra, il formato del link
+// lo decidiamo noi (lo genera il nostro server), non Supabase.
+function leggiTokenRegistrazione() {
+  var hash = location.hash || '';
+  var corrispondenza = hash.match(/^#\/?registrati\/([^/?]+)/);
+  return corrispondenza ? decodeURIComponent(corrispondenza[1]) : null;
+}
+
+// Chiede al server per chi è il link (nome e cognome) e se è ancora
+// valido, prima di mostrare il modulo vero e proprio.
+function caricaDatiRegistrazione(token) {
+  registrazioneCaricamento = 'loading';
+  render();
+
+  fetch('/api/registrazione/' + encodeURIComponent(token))
+    .then(function (res) {
+      return res.json().then(function (corpo) {
+        if (!res.ok) {
+          var errore = new Error(corpo && corpo.errore ? corpo.errore : 'Richiesta non riuscita');
+          errore.messaggioServer = corpo && corpo.errore;
+          throw errore;
+        }
+        return corpo;
+      });
+    })
+    .then(function (corpo) {
+      registrazioneNome = corpo.nome || '';
+      registrazioneCognome = corpo.cognome || '';
+      registrazioneCaricamento = 'ok';
+      render();
+    })
+    .catch(function (errore) {
+      registrazioneCaricamento = 'errore';
+      registrazioneErroreCaricamento = (errore && errore.messaggioServer) || 'Non sono riuscito a leggere questo link: riprovi più tardi.';
+      render();
+    });
+}
+
+function onRegistrazioneDataInputChange(e) {
+  var cifre = soliDigitiData(e.target.value);
+  var formattato = formattaDigitiComeData(cifre);
+  e.target.value = formattato;
+  try { e.target.setSelectionRange(formattato.length, formattato.length); } catch (err) {}
+
+  registrazioneDataTesto = formattato;
+  registrazioneDataNascita = cifre.length === 8 ? dataDigitiInIso(cifre) : null;
+}
+function onRegistrazioneEmailChange(e) { registrazioneEmail = e.target.value; }
+function onRegistrazionePasswordChange(e) { registrazionePassword = e.target.value; }
+function onRegistrazionePasswordConfermaChange(e) { registrazionePasswordConferma = e.target.value; }
+
+function confermaRegistrazione() {
+  var dataNascita = registrazioneDataNascita || '';
+  var email = (registrazioneEmail || '').trim();
+  var password = registrazionePassword || '';
+  var passwordConferma = registrazionePasswordConferma || '';
+
+  if (!dataNascita) {
+    registrazioneErrore = 'Scriva la Sua data di nascita.';
+    render();
+    return;
+  }
+  if (new Date(dataNascita) > new Date(new Date().toDateString())) {
+    registrazioneErrore = 'La data di nascita non può essere nel futuro.';
+    render();
+    return;
+  }
+  if (!email) {
+    registrazioneErrore = 'Scriva la Sua email.';
+    render();
+    return;
+  }
+  if (password.length < 8) {
+    registrazioneErrore = 'La password deve avere almeno 8 caratteri.';
+    render();
+    return;
+  }
+  if (password !== passwordConferma) {
+    registrazioneErrore = 'Le due password scritte non coincidono.';
+    render();
+    return;
+  }
+
+  registrazioneErrore = '';
+  registrazioneInCorso = true;
+  render();
+
+  fetch('/api/registrazione/' + encodeURIComponent(registrazioneToken), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data_nascita: dataNascita, email: email, password: password }),
+  })
+    .then(function (res) {
+      return res.json().then(function (corpo) {
+        if (!res.ok) {
+          var errore = new Error(corpo && corpo.errore ? corpo.errore : 'Richiesta non riuscita');
+          errore.messaggioServer = corpo && corpo.errore;
+          throw errore;
+        }
+        return corpo;
+      });
+    })
+    .then(function () {
+      // Registrazione completata: lo facciamo subito accedere con
+      // l'email e la password appena scelte, senza fargli rifare tutto
+      // da capo dalla schermata di login.
+      return supabaseClient.auth.signInWithPassword({ email: email, password: password });
+    })
+    .then(function (risultato) {
+      if (risultato.error) {
+        // Caso raro (per esempio un intoppo di connessione proprio in
+        // questo istante): la registrazione è comunque andata a buon
+        // fine, quindi lo mandiamo alla schermata di login normale, con
+        // le credenziali già pronte per entrare.
+        registrazioneAttiva = false;
+        accessoControllato = true;
+        loginEmailDigitata = email;
+        try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { location.hash = ''; }
+        mostraToast('Registrazione completata: acceda con l\'email e la password appena scelte.');
+        render();
+        return;
+      }
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { location.hash = ''; }
+      registrazioneAttiva = false;
+      // "SIGNED_IN" esplicito per lo stesso motivo di
+      // confermaImpostaPassword() più sopra: avviaApp() è già uscita
+      // subito dopo aver letto il token dal link, quindi
+      // onAuthStateChange non è collegato per questa sessione. Questo è
+      // il primo vero accesso del giocatore: deve partire da
+      // "Certificati", come ogni login.
+      supabaseClient.auth.getSession().then(function (r) {
+        aggiornaAccessoDaSessione(r && r.data ? r.data.session : null, 0, 'SIGNED_IN');
+      });
+    })
+    .catch(function (errore) {
+      registrazioneInCorso = false;
+      registrazioneErrore = (errore && errore.messaggioServer) || 'Non è stato possibile completare la registrazione: riprovi.';
+      render();
+    });
+}
+
+function viewRegistrazione() {
+  var campoStile = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
+
+  if (registrazioneCaricamento === 'loading') {
+    return '' +
+    '<section class="wrap" style="padding-top:64px;padding-bottom:56px;max-width:440px;">' +
+      '<p style="color:var(--ink-muted);">Caricamento&hellip;</p>' +
+    '</section>';
+  }
+  if (registrazioneCaricamento === 'errore') {
+    return '' +
+    '<section class="wrap" style="padding-top:64px;padding-bottom:56px;max-width:440px;">' +
+      '<span class="eyebrow-pill">Registrazione</span>' +
+      '<h1 style="font-size:1.9rem;margin-top:10px;">Link non valido</h1>' +
+      '<p class="subtitle">' + escapeHtml(registrazioneErroreCaricamento) + '</p>' +
+      '<span class="pill" style="cursor:pointer;" onclick="location.href = location.pathname;">Vada alla pagina di accesso</span>' +
+    '</section>';
+  }
+
+  return '' +
+  '<section class="wrap" style="padding-top:64px;padding-bottom:56px;max-width:440px;">' +
+    '<span class="eyebrow-pill">Benvenuto</span>' +
+    '<h1 style="font-size:1.9rem;margin-top:10px;">Ciao ' + escapeHtml(registrazioneNome) + '!</h1>' +
+    '<p class="subtitle">Completi la registrazione per accedere e caricare il Suo certificato medico.</p>' +
+    '<div class="qcard" style="margin-top:24px;display:flex;flex-direction:column;gap:14px;">' +
+      '<div><span class="field-label">Data di nascita</span><input type="text" inputmode="numeric" autocomplete="off" value="' + escapeHtml(registrazioneDataTesto) + '" placeholder="GG/MM/AAAA" maxlength="10" oninput="onRegistrazioneDataInputChange(event)" style="' + campoStile + '"></div>' +
+      '<div><span class="field-label">Email</span><input type="email" autocomplete="email" value="' + escapeHtml(registrazioneEmail) + '" oninput="onRegistrazioneEmailChange(event)" style="' + campoStile + '"></div>' +
+      '<div><span class="field-label">Password (almeno 8 caratteri)</span><input type="password" autocomplete="new-password" value="' + escapeHtml(registrazionePassword) + '" oninput="onRegistrazionePasswordChange(event)" style="' + campoStile + '"></div>' +
+      '<div><span class="field-label">Ripeta la password</span><input type="password" autocomplete="new-password" value="' + escapeHtml(registrazionePasswordConferma) + '" oninput="onRegistrazionePasswordConfermaChange(event)" onkeydown="if(event.key===\'Enter\'){confermaRegistrazione();}" style="' + campoStile + '"></div>' +
+      (registrazioneErrore ? '<p style="color:var(--late);font-size:.88rem;margin:0;">' + escapeHtml(registrazioneErrore) + '</p>' : '') +
+      '<span class="pill pill-solid" style="cursor:pointer;align-self:flex-start;opacity:' + (registrazioneInCorso ? '.6' : '1') + ';" onclick="' + (registrazioneInCorso ? '' : 'confermaRegistrazione()') + '">' + (registrazioneInCorso ? 'Registrazione&hellip;' : 'Completa la registrazione') + '</span>' +
+    '</div>' +
+  '</section>';
+}
+
 function confermaImpostaPassword() {
   var pw = impostaPasswordValore || '';
   var pw2 = impostaPasswordConferma || '';
@@ -1724,9 +2032,14 @@ function confermaImpostaPassword() {
     impostaPasswordConferma = '';
     // Recuperiamo la sessione attiva (impostata già da setSession() in
     // avviaApp()) per considerarlo subito "loggato", senza fargli
-    // rifare il login con la password appena scelta.
+    // rifare il login con la password appena scelta. "SIGNED_IN" qui è
+    // esplicito (non passa da onAuthStateChange, perché avviaApp() è
+    // già uscita subito dopo aver letto il token dell'invito): questo
+    // è a tutti gli effetti il primo vero accesso del giocatore, quindi
+    // deve partire dalla home (o da "Certificati", se è un giocatore),
+    // come ogni altro login.
     supabaseClient.auth.getSession().then(function (r) {
-      aggiornaAccessoDaSessione(r && r.data ? r.data.session : null);
+      aggiornaAccessoDaSessione(r && r.data ? r.data.session : null, 0, 'SIGNED_IN');
     });
   }).catch(function () {
     impostaPasswordInCorso = false;
@@ -1898,7 +2211,15 @@ function confermaImpostazioniAccount() {
 // rispondere la primissima volta).
 var TENTATIVI_CHI_SONO = 2;
 
-function aggiornaAccessoDaSessione(sessione, tentativo) {
+// "evento" (facoltativo) è il tipo di evento di Supabase Auth che ha
+// portato qui (per esempio 'SIGNED_IN', passato da onAuthStateChange
+// più sotto, in avviaApp()): serve solo per sapere se si tratta di un
+// login VERO E PROPRIO appena fatto (con cui si riparte sempre dalla
+// home, invece di ritrovarsi sulla pagina in cui si era rimasti prima
+// di disconnettersi), oppure di un semplice ritrovamento di una
+// sessione già esistente (riapertura del sito, rinnovo automatico del
+// token), che invece non deve spostare nessuno da dove si trova.
+function aggiornaAccessoDaSessione(sessione, tentativo, evento) {
   tentativo = tentativo || 0;
   tokenSessioneCorrente = sessione ? sessione.access_token : null;
 
@@ -1929,7 +2250,18 @@ function aggiornaAccessoDaSessione(sessione, tentativo) {
       accesso = { ruolo: dati.ruolo, nome: dati.nome, cognome: dati.cognome, email: dati.email };
       giocatoreIdentitaId = dati.idGiocatore || null;
       accessoControllato = true;
-      if (accesso.ruolo === 'giocatore' && (!location.hash || location.hash === '#')) {
+      // Su richiesta del tutor, un login VERO (non un semplice
+      // ritrovamento di una sessione già esistente) deve sempre far
+      // ripartire dalla home, e mai dalla pagina in cui ci si trovava
+      // prima di disconnettersi (l'indirizzo, nel frattempo, resta
+      // spesso quello: "Esci" non lo svuota da solo).
+      if (evento === 'SIGNED_IN') {
+        location.hash = (accesso.ruolo === 'giocatore') ? '#/certificati' : '';
+      } else if (accesso.ruolo === 'giocatore' && (!location.hash || location.hash === '#')) {
+        // Chi riapre il sito con una sessione già valida (non un login
+        // vero e proprio) e non ha nessuna pagina specifica nell'indirizzo:
+        // per un Giocatore ha comunque senso partire da "Certificati",
+        // la sua pagina principale.
         location.hash = '#/certificati';
       }
       render();
@@ -1943,7 +2275,7 @@ function aggiornaAccessoDaSessione(sessione, tentativo) {
       // schermata di accesso.
       if (!rifiutoVero && tentativo < TENTATIVI_CHI_SONO) {
         setTimeout(function () {
-          aggiornaAccessoDaSessione(sessione, tentativo + 1);
+          aggiornaAccessoDaSessione(sessione, tentativo + 1, evento);
         }, 1200);
         return;
       }
@@ -2313,22 +2645,27 @@ window.addEventListener('hashchange', function () {
   nuovoGiocatoreCognome = '';
   nuovoGiocatoreEmail = '';
   nuovoGiocatoreDataNascita = '';
-  nuovoGiocatoreRuolo = '';
   nuovoGiocatoreSquadreIds = [];
   nuovoGiocatoreSquadreAperto = false;
-  nuovoGiocatorePiede = '';
   nuovoGiocatoreInviando = false;
   nuovoGiocatoreErrore = null;
+
+  giocatoreRapidoAperto = false;
+  giocatoreRapidoNome = '';
+  giocatoreRapidoCognome = '';
+  giocatoreRapidoSquadreIds = [];
+  giocatoreRapidoSquadreAperto = false;
+  giocatoreRapidoInviando = false;
+  giocatoreRapidoErrore = null;
+  giocatoreRapidoLinkGenerato = null;
 
   giocatoreInModificaId = null;
   giocatoreModificaNome = '';
   giocatoreModificaCognome = '';
   giocatoreModificaEmail = '';
   giocatoreModificaDataNascita = '';
-  giocatoreModificaRuolo = '';
   giocatoreModificaSquadreIds = [];
   giocatoreModificaSquadreAperto = false;
-  giocatoreModificaPiede = '';
   giocatoreModificaInviando = false;
   giocatoreModificaErrore = null;
 
@@ -2520,7 +2857,7 @@ function viewSquadreHub() {
   var perGiocatore = !!(accesso && accesso.ruolo === 'giocatore');
   var titoloSecondaCard = perGiocatore ? 'Giocatore' : 'Giocatori';
   var descSecondaCard = perGiocatore
-    ? 'La Sua scheda giocatore: ruolo, squadra e anno di nascita.'
+    ? 'La Sua scheda giocatore: squadra e anno di nascita.'
     : 'Un inventario di tutti i giocatori della societ&agrave;, anche di squadre diverse.';
   var sottotitolo = perGiocatore
     ? 'Da qui pu&ograve; vedere l\'elenco delle squadre oppure la Sua scheda giocatore.'
@@ -2563,7 +2900,7 @@ function viewSquadreGiocatori() {
   if (isAdmin && Array.isArray(elenco) && ricercaAttiva) {
     var testoRicerca = giocatoriRicerca.trim().toLowerCase();
     elenco = elenco.filter(function (p) {
-      return [p.nome, p.cognome, p.ruolo, p.squadra].some(function (campo) {
+      return [p.nome, p.cognome, p.squadra].some(function (campo) {
         return campo && String(campo).toLowerCase().indexOf(testoRicerca) !== -1;
       });
     });
@@ -2574,7 +2911,7 @@ function viewSquadreGiocatori() {
     body = '<p style="color:var(--ink-muted);">Caricamento giocatori dal database&hellip;</p>';
   } else if (elenco.error) {
     body = '<div class="qcard"><span><strong>&#9888;&#65039; Errore.</strong> Non &egrave; stato possibile leggere i giocatori dal server: verificare che il server sia avviato e collegato al database.</span></div>';
-  } else if (!elenco.length && !(isAdmin && !vistaArchiviati && nuovoGiocatoreAperto)) {
+  } else if (!elenco.length && !(isAdmin && !vistaArchiviati && (nuovoGiocatoreAperto || giocatoreRapidoAperto))) {
     body = '<div class="qcard">' + (ricercaAttiva ? 'Nessun giocatore trovato per questa ricerca.' : (vistaArchiviati ? 'Nessun giocatore archiviato.' : 'Nessun giocatore trovato nel database.')) + '</div>';
   } else {
     var rows = elenco.map(function (p) {
@@ -2595,15 +2932,17 @@ function viewSquadreGiocatori() {
       '<div class="qcard cert-row" style="flex-direction:row;">' +
         '<div style="font-weight:700;flex:0 0 200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + nomeCompleto + '</div>' +
         '<ul style="color:var(--ink-muted);font-size:.85rem;flex:1;min-width:0;margin:0;padding-left:18px;">' +
-          '<li>Ruolo: ' + (p.ruolo ? escapeHtml(p.ruolo) : '&mdash;') + '</li>' +
           '<li>Squadra: ' + (p.squadra ? escapeHtml(p.squadra) : '&mdash;') + '</li>' +
           '<li>Anno di nascita: ' + (p.anno_nascita ? escapeHtml(p.anno_nascita) : '&mdash;') + '</li>' +
         '</ul>' +
         (isAdmin && !vistaArchiviati ? '' +
           '<div class="right-cluster">' +
-            (!p.accesso_attivo ? '' +
+            (p.registrazione_in_attesa ? '' +
+              '<span class="badge badge-none" style="font-size:.72rem;">' + (p.registrazione_scaduta ? 'Link scaduto' : 'In attesa di registrazione') + '</span>' +
+              '<span class="pill" style="font-size:.78rem;cursor:' + (String(giocatoreLinkInCorsoId) === String(p.id) ? 'default' : 'pointer') + ';opacity:' + (String(giocatoreLinkInCorsoId) === String(p.id) ? '.6' : '1') + ';" title="Genera un nuovo link da mandare al giocatore (quello di prima, se c\'era, smette subito di funzionare)" onclick="' + (String(giocatoreLinkInCorsoId) === String(p.id) ? '' : 'generaLinkRegistrazione(' + JSON.stringify(p.id) + ', ' + JSON.stringify(p.nome) + ', ' + JSON.stringify(p.cognome) + ')') + '">' + (String(giocatoreLinkInCorsoId) === String(p.id) ? 'Genero&hellip;' : 'Genera nuovo link') + '</span>'
+            : (!p.accesso_attivo ? '' +
               '<span class="pill" style="font-size:.78rem;cursor:' + (String(giocatoreInvitoInCorsoId) === String(p.id) ? 'default' : 'pointer') + ';opacity:' + (String(giocatoreInvitoInCorsoId) === String(p.id) ? '.6' : '1') + ';" title="Manda l\'email per scegliere la password" onclick="' + (String(giocatoreInvitoInCorsoId) === String(p.id) ? '' : 'inviaAccessoGiocatore(' + JSON.stringify(p.id) + ')') + '">' + (String(giocatoreInvitoInCorsoId) === String(p.id) ? 'Invio&hellip;' : 'Manda accesso') + '</span>'
-            : '') +
+            : '')) +
             '<span class="icon-btn" title="Modifica giocatore" onclick="apriModificaGiocatore(' + JSON.stringify(p.id) + ')">' + ICONS.edit + '</span>' +
             '<span class="icon-btn" title="Elimina giocatore" onclick="chiediEliminaGiocatore(' + JSON.stringify(p.id) + ')">' + ICONS.trash + '</span>' +
           '</div>' : '') +
@@ -2614,6 +2953,7 @@ function viewSquadreGiocatori() {
           '</div>' : '') +
       '</div>';
     }).join('');
+    if (!vistaArchiviati && isAdmin && giocatoreRapidoAperto) { rows = giocatoreRapidoCardHtml() + rows; }
     if (!vistaArchiviati && isAdmin && nuovoGiocatoreAperto) { rows = nuovoGiocatoreCardHtml() + rows; }
     body = '<div class="list">' + rows + '</div>';
   }
@@ -2624,7 +2964,7 @@ function viewSquadreGiocatori() {
         filtroGiocatoriBtn('attivi', 'Attivi') +
         filtroGiocatoriBtn('archiviati', 'Archiviati') +
       '</div>' +
-      '<input type="text" id="ricercaGiocatoriInput" value="' + escapeHtml(giocatoriRicerca) + '" oninput="onRicercaGiocatoriChange(event)" placeholder="Cerca per nome, cognome, ruolo o squadra&hellip;" style="flex:1 1 240px;max-width:320px;padding:10px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.9rem;font-family:inherit;background:var(--surface);color:var(--ink);">' +
+      '<input type="text" id="ricercaGiocatoriInput" value="' + escapeHtml(giocatoriRicerca) + '" oninput="onRicercaGiocatoriChange(event)" placeholder="Cerca per nome, cognome o squadra&hellip;" style="flex:1 1 240px;max-width:320px;padding:10px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.9rem;font-family:inherit;background:var(--surface);color:var(--ink);">' +
     '</div>' : '';
 
   return '' +
@@ -2634,7 +2974,12 @@ function viewSquadreGiocatori() {
   '<section class="wrap"><div class="page-title">' +
     '<div><span class="eyebrow-pill">Settore giovanile</span><h1 style="font-size:2rem;">Giocatori</h1>' +
     '<p class="subtitle">Tutti i giocatori della societ&agrave;, anche di squadre diverse.</p></div>' +
-    (isAdmin && !vistaArchiviati ? '<span class="btn btn-outline" onclick="apriNuovoGiocatore()">' + ICONS.plus + ' Nuovo giocatore</span>' : '') +
+    (isAdmin && !vistaArchiviati ? '' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+        '<span class="btn btn-outline" onclick="apriGiocatoreRapido()">' + ICONS.plus + ' Aggiungi con link WhatsApp</span>' +
+        '<span class="btn btn-outline" onclick="apriNuovoGiocatore()">' + ICONS.plus + ' Nuovo giocatore</span>' +
+      '</div>'
+    : '') +
   '</div></section>' +
   '<section class="wrap" style="padding-bottom:56px;">' + filtriHtml + body + '</section>';
 }
@@ -2657,7 +3002,7 @@ function impostaFiltroGiocatori(valore) {
 }
 
 // Barra di ricerca dell'elenco Giocatori (solo Admin): filtra per nome,
-// cognome, ruolo o squadra senza bisogno di richieste al server.
+// cognome o squadra senza bisogno di richieste al server.
 function onRicercaGiocatoriChange(e) {
   giocatoriRicerca = e.target.value;
   render();
@@ -2716,7 +3061,6 @@ function viewGiocatoreSingolo() {
         '<div class="qcard cert-row" style="flex-direction:row;">' +
           '<div style="font-weight:700;flex:0 0 200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + nomeCompleto + '</div>' +
           '<ul style="color:var(--ink-muted);font-size:.85rem;flex:1;min-width:0;margin:0;padding-left:18px;">' +
-            '<li>Ruolo: ' + (me.ruolo ? escapeHtml(me.ruolo) : '&mdash;') + '</li>' +
             '<li>Squadra: ' + (me.squadra ? escapeHtml(me.squadra) : '&mdash;') + '</li>' +
             '<li>Anno di nascita: ' + (me.anno_nascita ? escapeHtml(me.anno_nascita) : '&mdash;') + '</li>' +
           '</ul>' +
@@ -2828,7 +3172,6 @@ function viewRosa(teamId) {
       '<div class="qcard cert-row" style="flex-direction:row;">' +
         '<div style="font-weight:700;flex:0 0 200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + nomeCompleto + '</div>' +
         '<ul style="color:var(--ink-muted);font-size:.85rem;flex:1;min-width:0;margin:0;padding-left:18px;">' +
-          '<li>Ruolo: ' + (p.ruolo ? escapeHtml(p.ruolo) : '&mdash;') + '</li>' +
           '<li>Anno di nascita: ' + (p.anno_nascita ? escapeHtml(p.anno_nascita) : '&mdash;') + '</li>' +
         '</ul>' +
       '</div>';
@@ -4566,6 +4909,11 @@ function render() {
     return;
   }
 
+  if (registrazioneAttiva) {
+    document.getElementById('app').innerHTML = '<div style="width:100%;">' + viewRegistrazione() + '</div>';
+    return;
+  }
+
   if (!accessoControllato) {
     document.getElementById('app').innerHTML = '<div style="width:100%;padding:120px 20px;text-align:center;color:var(--ink-muted);">Caricamento&hellip;</div>';
     return;
@@ -4666,6 +5014,18 @@ function avviaApp() {
         },
       });
 
+      // Chi arriva da un link "Aggiungi con link WhatsApp" (vedi
+      // apriGiocatoreRapido() più sopra) ha, nel proprio indirizzo, il
+      // token di registrazione: mostriamo subito la schermata apposita,
+      // senza nessun controllo di sessione (non ne ha ancora una).
+      var tokenRegistrazione = leggiTokenRegistrazione();
+      if (tokenRegistrazione) {
+        registrazioneToken = tokenRegistrazione;
+        registrazioneAttiva = true;
+        caricaDatiRegistrazione(tokenRegistrazione);
+        return;
+      }
+
       // Chi arriva da un link di invito o di recupero password ha, nel
       // proprio indirizzo, un token speciale: lo usiamo solo per la
       // pagina "Imposta la tua password", senza considerarlo ancora un
@@ -4699,7 +5059,7 @@ function avviaApp() {
         // sessione già salvata, era di ritrovarsi comunque alla
         // schermata di accesso.
         if (!impostaPasswordAttiva && accessoControllato) {
-          aggiornaAccessoDaSessione(sessione);
+          aggiornaAccessoDaSessione(sessione, 0, evento);
         }
       });
 
