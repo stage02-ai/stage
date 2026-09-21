@@ -461,6 +461,15 @@ var nuovoGiocatoreErrore = null;
 // più sotto e POST /api/giocatori/:id/invita sul server).
 var giocatoreInvitoInCorsoId = null;
 
+// Id della squadra da preselezionare nel modulo "Nuovo giocatore"
+// quando lo si apre dal pulsante "Aggiungi giocatore" della pagina
+// Rosa di una squadra (vedi apriNuovoGiocatorePerSquadra più sotto).
+// Non viene svuotata dal reset che avviene a ogni cambio pagina
+// (l'ascoltatore "hashchange" più in basso): serve proprio a
+// sopravvivere al passaggio dalla pagina Rosa alla pagina Giocatori,
+// per poi essere letta una sola volta e azzerata subito dopo.
+var vaiAggiungiGiocatorePerSquadraId = null;
+
 function apriNuovoGiocatore() {
   nuovoGiocatoreAperto = true;
   nuovoGiocatoreNome = '';
@@ -477,6 +486,19 @@ function apriNuovoGiocatore() {
   nuovoGiocatoreErrore = null;
   if (teamsCache === null) { fetchTeams(); }
   render();
+}
+
+// Usata dal pulsante "Aggiungi giocatore" nella pagina Rosa di una
+// squadra: porta alla pagina Giocatori con il modulo "Nuovo giocatore"
+// già aperto e quella squadra già selezionata nel campo "Squadre",
+// così l'Admin non deve ricercarla e selezionarla di nuovo. Il cambio
+// pagina svuota da solo tutti i moduli aperti (vedi l'ascoltatore
+// "hashchange"): qui ci limitiamo a lasciare detto quale squadra
+// preselezionare, e sarà quell'ascoltatore ad aprire davvero il
+// modulo una volta arrivati sulla nuova pagina.
+function apriNuovoGiocatorePerSquadra(idSquadra) {
+  vaiAggiungiGiocatorePerSquadraId = idSquadra;
+  navigate('squadre/giocatori');
 }
 
 function annullaNuovoGiocatore() {
@@ -2344,6 +2366,20 @@ window.addEventListener('hashchange', function () {
   certificatiCache = null;
   archivioCache = null;
   archivioFiltro = 'tutti';
+
+  // Se si sta arrivando qui dal pulsante "Aggiungi giocatore" di una
+  // pagina Rosa (vedi apriNuovoGiocatorePerSquadra), il modulo va
+  // aperto ORA, dopo il reset appena fatto qui sopra (che altrimenti
+  // lo richiuderebbe subito). Si legge il valore una sola volta e si
+  // azzera subito, così non si riapre da solo a ogni cambio pagina
+  // successivo.
+  if (vaiAggiungiGiocatorePerSquadraId) {
+    var idSquadraPreselezionata = vaiAggiungiGiocatorePerSquadraId;
+    vaiAggiungiGiocatorePerSquadraId = null;
+    apriNuovoGiocatore();
+    nuovoGiocatoreSquadreIds = [idSquadraPreselezionata];
+  }
+
   render();
 });
 
@@ -2806,6 +2842,7 @@ function viewRosa(teamId) {
   '</section>' +
   '<section class="wrap"><div class="page-title">' +
     '<div><span class="eyebrow-pill">Squadre &middot; ' + escapeHtml(teamName) + '</span><h1 style="font-size:2rem;">Rosa</h1></div>' +
+    ((accesso && accesso.ruolo === 'admin') ? '<span class="btn btn-outline" onclick="apriNuovoGiocatorePerSquadra(' + JSON.stringify(teamId) + ')">' + ICONS.plus + ' Aggiungi giocatore</span>' : '') +
   '</div></section>' +
   '<section class="wrap" style="padding-bottom:56px;">' + body + '</section>';
 }
