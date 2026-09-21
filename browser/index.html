@@ -2842,7 +2842,7 @@ function viewRosa(teamId) {
   '</section>' +
   '<section class="wrap"><div class="page-title">' +
     '<div><span class="eyebrow-pill">Squadre &middot; ' + escapeHtml(teamName) + '</span><h1 style="font-size:2rem;">Rosa</h1></div>' +
-    ((accesso && accesso.ruolo === 'admin') ? '<span class="btn btn-outline" onclick="apriNuovoGiocatorePerSquadra(' + JSON.stringify(teamId) + ')">' + ICONS.plus + ' Aggiungi giocatore</span>' : '') +
+    ((accesso && accesso.ruolo === 'admin') ? '<span class="btn btn-outline" onclick=\'apriNuovoGiocatorePerSquadra(' + JSON.stringify(teamId) + ')\'>' + ICONS.plus + ' Aggiungi giocatore</span>' : '') +
   '</div></section>' +
   '<section class="wrap" style="padding-bottom:56px;">' + body + '</section>';
 }
