@@ -449,7 +449,7 @@ var nuovoGiocatoreSquadreAperto = false; // se l'elenco delle caselle è aperto 
 var nuovoGiocatoreInviando = false;
 var nuovoGiocatoreErrore = null;
 
-// ---------- "Aggiungi con link WhatsApp" ----------
+// ---------- "Aggiungi giocatore rapido (con link)" ----------
 //
 // Modalità alternativa a "Nuovo giocatore" qui sopra, per quando il
 // giocatore non è presente di persona: l'Admin inserisce solo nome,
@@ -468,8 +468,8 @@ var giocatoreRapidoErrore = null;
 // Compilato dopo una creazione riuscita (o dopo aver generato/rigenerato
 // un link per un giocatore già esistente, vedi generaLinkRegistrazione
 // più sotto): { nome, cognome, link }, per mostrare il link appena
-// pronto con i pulsanti "Copia" e "Apri WhatsApp". Torna a null quando
-// si chiude quel riquadro.
+// pronto con il pulsante "Copia". Torna a null quando si chiude quel
+// riquadro.
 var giocatoreRapidoLinkGenerato = null;
 
 function apriGiocatoreRapido() {
@@ -544,7 +544,7 @@ function submitGiocatoreRapido() {
 }
 
 // Genera (o rigenera) il link di registrazione per un giocatore già
-// esistente, creato con "Aggiungi con link WhatsApp", che non si è
+// esistente, creato con "Aggiungi giocatore rapido (con link)", che non si è
 // ancora registrato: richiamata dal pulsante sulla sua riga
 // nell'elenco Giocatori. Il link precedente (se c'era) smette subito
 // di funzionare.
@@ -570,6 +570,13 @@ function generaLinkRegistrazione(id, nome, cognome) {
       giocatoreLinkInCorsoId = null;
       giocatoriCache = null; // aggiorna la scadenza mostrata sulla riga
       giocatoreRapidoLinkGenerato = { nome: nome, cognome: cognome, link: corpo.link };
+      // Serve anche questo, non solo "giocatoreRapidoLinkGenerato", perché
+      // il riquadro col link viene mostrato solo quando questo è vero
+      // (vedi più sotto, dove si compone l'elenco Giocatori): senza,
+      // generare un nuovo link da questo pulsante (per un giocatore già
+      // esistente) non faceva comparire da nessuna parte il link appena
+      // creato.
+      giocatoreRapidoAperto = true;
       render();
     })
     .catch(function (errore) {
@@ -614,6 +621,12 @@ var giocatoreInvitoInCorsoId = null;
 // per poi essere letta una sola volta e azzerata subito dopo.
 var vaiAggiungiGiocatorePerSquadraId = null;
 
+// Stessa cosa, ma per il pulsante "Aggiungi giocatore rapido (con
+// link)" della pagina Rosa (vedi apriGiocatoreRapidoPerSquadra più
+// sotto): preseleziona la squadra nel modulo rapido invece che in
+// quello completo.
+var vaiGiocatoreRapidoPerSquadraId = null;
+
 function apriNuovoGiocatore() {
   nuovoGiocatoreAperto = true;
   nuovoGiocatoreNome = '';
@@ -638,6 +651,15 @@ function apriNuovoGiocatore() {
 // modulo una volta arrivati sulla nuova pagina.
 function apriNuovoGiocatorePerSquadra(idSquadra) {
   vaiAggiungiGiocatorePerSquadraId = idSquadra;
+  navigate('squadre/giocatori');
+}
+
+// Come apriNuovoGiocatorePerSquadra() qui sopra, ma per il pulsante
+// "Aggiungi giocatore rapido (con link)" della pagina Rosa: porta alla
+// pagina Giocatori con IL MODULO RAPIDO già aperto e quella squadra
+// già selezionata.
+function apriGiocatoreRapidoPerSquadra(idSquadra) {
+  vaiGiocatoreRapidoPerSquadraId = idSquadra;
   navigate('squadre/giocatori');
 }
 
@@ -878,12 +900,12 @@ function nuovoGiocatoreCardHtml() {
   '</div>';
 }
 
-// Il modulo "Aggiungi con link WhatsApp": solo nome, cognome e
+// Il modulo "Aggiungi giocatore rapido (con link)": solo nome, cognome e
 // squadre. Dopo il salvataggio, al posto del modulo compare il link
 // appena generato (vedi linkRegistrazioneGeneratoCardHtml più sotto).
 function giocatoreRapidoCardHtml() {
   if (giocatoreRapidoLinkGenerato) {
-    return linkRegistrazioneGeneratoCardHtml(giocatoreRapidoLinkGenerato, annullaGiocatoreRapido);
+    return linkRegistrazioneGeneratoCardHtml(giocatoreRapidoLinkGenerato, 'annullaGiocatoreRapido');
   }
 
   var campoStile = 'width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:.92rem;font-family:inherit;background:var(--surface);color:var(--ink);';
@@ -892,7 +914,7 @@ function giocatoreRapidoCardHtml() {
   '<div class="qcard">' +
     '<div style="display:flex;align-items:center;gap:10px;">' +
       '<div class="qcard-icon">' + ICONS.account + '</div>' +
-      '<h3 style="font-size:1rem;">Aggiungi con link WhatsApp</h3>' +
+      '<h3 style="font-size:1rem;">Aggiungi giocatore rapido (con link)</h3>' +
     '</div>' +
     '<p style="color:var(--ink-muted);font-size:.85rem;margin:0;">Da usare quando il giocatore non &egrave; presente: inserisca solo nome, cognome e squadra. Il sito former&agrave; un link da mandare al giocatore; lo aprir&agrave; lui per scegliere data di nascita, email e password e registrarsi da solo.</p>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">' +
@@ -1795,7 +1817,7 @@ function onImpostaPasswordConfermaChange(e) { impostaPasswordConferma = e.target
 // ---------- Registrazione di un giocatore da un link WhatsApp ----------
 //
 // Chi apre un link "#/registrati/TOKEN" (generato dall'Admin con
-// "Aggiungi con link WhatsApp", vedi apriGiocatoreRapido() più sopra e
+// "Aggiungi giocatore rapido (con link)", vedi apriGiocatoreRapido() più sopra e
 // POST /api/giocatori/rapido sul server) non ha ancora nessun account:
 // questa schermata, mostrata al posto del solito login (vedi
 // avviaApp() e render() più sotto), gli fa scegliere data di nascita,
@@ -2708,6 +2730,16 @@ window.addEventListener('hashchange', function () {
     nuovoGiocatoreSquadreIds = [idSquadraPreselezionata];
   }
 
+  // Stessa cosa, ma per il pulsante "Aggiungi giocatore rapido (con
+  // link)" della pagina Rosa (vedi apriGiocatoreRapidoPerSquadra più
+  // sopra): qui si apre il modulo rapido invece di quello completo.
+  if (vaiGiocatoreRapidoPerSquadraId) {
+    var idSquadraRapidaPreselezionata = vaiGiocatoreRapidoPerSquadraId;
+    vaiGiocatoreRapidoPerSquadraId = null;
+    apriGiocatoreRapido();
+    giocatoreRapidoSquadreIds = [idSquadraRapidaPreselezionata];
+  }
+
   render();
 });
 
@@ -2967,7 +2999,7 @@ function viewSquadreGiocatori() {
     '<p class="subtitle">Tutti i giocatori della societ&agrave;, anche di squadre diverse.</p></div>' +
     (isAdmin && !vistaArchiviati ? '' +
       '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
-        '<span class="btn btn-outline" onclick="apriGiocatoreRapido()">' + ICONS.plus + ' Aggiungi con link WhatsApp</span>' +
+        '<span class="btn btn-outline" onclick="apriGiocatoreRapido()">' + ICONS.plus + ' Aggiungi giocatore rapido (con link)</span>' +
         '<span class="btn btn-outline" onclick="apriNuovoGiocatore()">' + ICONS.plus + ' Nuovo giocatore</span>' +
       '</div>'
     : '') +
@@ -3176,7 +3208,12 @@ function viewRosa(teamId) {
   '</section>' +
   '<section class="wrap"><div class="page-title">' +
     '<div><span class="eyebrow-pill">Squadre &middot; ' + escapeHtml(teamName) + '</span><h1 style="font-size:2rem;">Rosa</h1></div>' +
-    ((accesso && accesso.ruolo === 'admin') ? '<span class="btn btn-outline" onclick=\'apriNuovoGiocatorePerSquadra(' + JSON.stringify(teamId) + ')\'>' + ICONS.plus + ' Aggiungi giocatore</span>' : '') +
+    ((accesso && accesso.ruolo === 'admin') ? '' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+        '<span class="btn btn-outline" onclick=\'apriGiocatoreRapidoPerSquadra(' + JSON.stringify(teamId) + ')\'>' + ICONS.plus + ' Aggiungi giocatore rapido (con link)</span>' +
+        '<span class="btn btn-outline" onclick=\'apriNuovoGiocatorePerSquadra(' + JSON.stringify(teamId) + ')\'>' + ICONS.plus + ' Aggiungi giocatore</span>' +
+      '</div>'
+    : '') +
   '</div></section>' +
   '<section class="wrap" style="padding-bottom:56px;">' + body + '</section>';
 }
@@ -5032,7 +5069,7 @@ function avviaApp() {
         }
       });
 
-      // Chi arriva da un link "Aggiungi con link WhatsApp" (vedi
+      // Chi arriva da un link "Aggiungi giocatore rapido (con link)" (vedi
       // apriGiocatoreRapido() più sopra) ha, nel proprio indirizzo, il
       // token di registrazione: mostriamo subito la schermata apposita,
       // senza nessun controllo di sessione (non ne ha ancora una).
